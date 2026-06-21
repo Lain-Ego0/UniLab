@@ -173,13 +173,20 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             "alive": rewards.alive,
             "dof_acc": rewards.dof_acc,
             "stand_still": rewards.stand_still,
+            "torques": rewards.torques,
+            "energy": rewards.energy,
             "swing_feet_z": self._reward_swing_feet_z,
             "contact": self._reward_contact,
             "foot_drag": self._reward_foot_drag,
         }
 
     def update_state(self, state: NpEnvState) -> NpEnvState:
-        self.phase = np.fmod(self.phase + self._cfg.ctrl_dt * self.gait_frequency, 1.0)
+        # Adaptive gait frequency: faster commands → higher step rate
+        cmd_speed = np.linalg.norm(state.info["commands"][:, :2], axis=1)
+        freq = np.clip(1.2 + 1.3 * cmd_speed / 0.6, 1.2, 2.5)
+        self.phase = np.fmod(
+            self.phase + self._cfg.ctrl_dt * freq, 1.0
+        )
         self.feet_phase[:, 0] = self.phase
         self.feet_phase[:, 3] = self.phase
 
@@ -199,13 +206,25 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             self.feet_force[:, i, :] = self._backend.get_sensor_data(self._cfg.sensor.feet_force[i])
         for i in range(len(self._cfg.sensor.feet_pos)):
             self.feet_pos[:, i, :] = self._backend.get_sensor_data(self._cfg.sensor.feet_pos[i])
+
+        # Estimate PD torques: tau = Kp*(target - q) - Kd*qdot
+        target = (
+            state.info["current_actions"] * self._cfg.control_config.action_scale
+            + self.default_angles
+        )
+        state.info["torques"] = np.asarray(
+            self._cfg.control_config.Kp * (target - dof_pos)
+            - self._cfg.control_config.Kd * dof_vel,
+            dtype=get_global_dtype(),
+        )
+
         # Apply command override (set by viser/external tooling)
         cmd_override = getattr(self, "_command_override", None)
         if cmd_override is not None:
             state.info["commands"][:] = cmd_override.reshape(1, 3)
 
         terminated = gravity[:, 2] <= 0.5
-        reward = self._compute_reward(state.info, linvel, gyro, dof_pos)
+        reward = self._compute_reward(state.info, linvel, gyro, dof_pos, dof_vel)
         obs = self._compute_obs(
             state.info, linvel, gyro, gravity, dof_pos, dof_vel, self.feet_phase
         )
@@ -254,13 +273,14 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         )
         return {"obs": obs, "critic": critic}
 
-    def _compute_reward(self, info: dict, linvel, gyro, dof_pos) -> np.ndarray:
+    def _compute_reward(self, info: dict, linvel, gyro, dof_pos, dof_vel) -> np.ndarray:
         cfg = self._reward_cfg
         ctx = RewardContext(
             info=info,
             linvel=linvel,
             gyro=gyro,
             dof_pos=dof_pos,
+            dof_vel=dof_vel,
             num_envs=self._num_envs,
             default_angles=self.default_angles,
             tracking_sigma=cfg.tracking_sigma,

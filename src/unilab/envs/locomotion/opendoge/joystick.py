@@ -309,9 +309,13 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
 
     def _reward_swing_feet_z(self, ctx: RewardContext) -> np.ndarray:
         is_swing = self.feet_phase >= 0.6
-        target_height = 0.1
-        height_error = np.square(self.feet_pos[:, :, 2] - target_height)
-        swing_rew = np.exp(-height_error / 0.01) * is_swing
+        # Adaptive target: higher speed → higher step clearance
+        cmd_speed = np.linalg.norm(ctx.info["commands"][:, :2], axis=1)  # (N,)
+        target_height = np.clip(0.03 + 0.05 * cmd_speed / 0.6, 0.03, 0.08)  # (N,)
+        height_error = np.square(
+            self.feet_pos[:, :, 2] - target_height[:, None]  # (N,4) - (N,1)
+        )
+        swing_rew = np.exp(-height_error / 0.008) * is_swing
         reward: np.ndarray = np.sum(swing_rew, axis=1) / len(self._cfg.sensor.feet_pos)
         return reward
 

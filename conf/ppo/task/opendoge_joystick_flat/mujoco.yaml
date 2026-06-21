@@ -22,9 +22,10 @@ env:
       - [1.0, 0.6, 1.5]
 reward:
   scales:
-    tracking_lin_vel: 1.5
+    tracking_vx: 1.5
+    tracking_vy: 1.5
     tracking_ang_vel: 0.3
-    tracking_vy: 1.0
+    cross_axis_suppression: -0.3
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
     base_height: -200.0

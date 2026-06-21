@@ -75,6 +75,33 @@ class OpenDogeJoystickCfg(OpenDogeBaseCfg):
 class OpenDogeJoystickDomainRandomizationProvider(LocomotionDRProvider):
     def _sample_commands(self, env: Any, num_reset: int) -> np.ndarray:
         commands = super()._sample_commands(env, num_reset)
+        # Inject pure single-axis commands so the policy sees "vx-only / vy-only / vyaw-only"
+        # scenarios during training (improves cross-axis suppression).
+        pure_prob = getattr(env.cfg.commands, "pure_axis_prob", 0.15)
+        if pure_prob > 0.0:
+            pure_mask = np.random.uniform(size=(num_reset,)) < min(pure_prob, 1.0)
+            if np.any(pure_mask):
+                n_pure = int(np.sum(pure_mask))
+                axis_choice = np.random.randint(0, 3, size=(n_pure,))
+                pure_cmd = np.zeros((n_pure, 3), dtype=commands.dtype)
+                vel_limit = env.cfg.commands.vel_limit
+                for i in range(n_pure):
+                    ax = axis_choice[i]
+                    lo, hi = vel_limit[0][ax], vel_limit[1][ax]
+                    # Ensure non-trivial magnitude (at least 20% of range away from zero)
+                    half_range = max(abs(lo), abs(hi)) * 0.2
+                    if lo >= 0:
+                        val = np.random.uniform(max(lo, half_range), hi)
+                    elif hi <= 0:
+                        val = np.random.uniform(lo, min(hi, -half_range))
+                    else:
+                        # Range spans zero — sample from [half_range, hi] or [lo, -half_range]
+                        if np.random.uniform() < 0.5:
+                            val = np.random.uniform(max(lo, half_range), hi) if hi > half_range else np.random.uniform(lo, -half_range)
+                        else:
+                            val = np.random.uniform(lo, -half_range) if lo < -half_range else np.random.uniform(half_range, hi)
+                    pure_cmd[i, ax] = val
+                commands[pure_mask] = pure_cmd
         # Zero tiny commands to avoid noise drift
         mask = np.linalg.norm(commands, axis=1) < 0.03
         commands[mask] = 0.0
@@ -174,9 +201,10 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
     def _init_reward_functions(self):
         self._previous_actions = np.zeros((self._num_envs, 12), dtype=np.float32)
         self._reward_fns: dict[str, Any] = {
-            "tracking_lin_vel": rewards.tracking_lin_vel,
+            "tracking_vx": rewards.tracking_vx,
+            "tracking_vy": rewards.tracking_vy,
             "tracking_ang_vel": rewards.tracking_ang_vel,
-            "tracking_vy": self._reward_tracking_vy,
+            "cross_axis_suppression": rewards.cross_axis_suppression,
             "lin_vel_z": rewards.lin_vel_z,
             "ang_vel_xy": rewards.ang_vel_xy,
             "base_height": rewards.base_height,
@@ -317,13 +345,6 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
 
         surface = np.asarray(sample_height(base_pos[:, :2]), dtype=get_global_dtype())
         return np.asarray(base_pos[:, 2] - surface, dtype=get_global_dtype())
-
-    def _reward_tracking_vy(self, ctx: RewardContext) -> np.ndarray:
-        """Exponential reward for lateral velocity tracking (isolated from vx)."""
-        vy_cmd = ctx.info["commands"][:, 1]
-        vy_actual = ctx.linvel[:, 1]
-        error = np.square(vy_cmd - vy_actual)
-        return np.exp(-error / ctx.tracking_sigma)  # type: ignore[no-any-return]
 
     def _reward_swing_feet_z(self, ctx: RewardContext) -> np.ndarray:
         is_swing = self.feet_phase >= 0.6

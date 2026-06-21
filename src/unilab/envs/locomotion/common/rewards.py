@@ -67,6 +67,42 @@ def tracking_ang_vel(ctx: RewardContext) -> np.ndarray:
     return np.exp(-ang_vel_error / ctx.tracking_sigma)  # type: ignore[no-any-return]
 
 
+def tracking_vx(ctx: RewardContext) -> np.ndarray:
+    """Exponential reward for tracking commanded forward velocity (vx only)."""
+    commands = ctx.info["commands"]
+    error = np.square(commands[:, 0] - ctx.linvel[:, 0])
+    return np.exp(-error / ctx.tracking_sigma)  # type: ignore[no-any-return]
+
+
+def tracking_vy(ctx: RewardContext) -> np.ndarray:
+    """Exponential reward for tracking commanded lateral velocity (vy only)."""
+    commands = ctx.info["commands"]
+    error = np.square(commands[:, 1] - ctx.linvel[:, 1])
+    return np.exp(-error / ctx.tracking_sigma)  # type: ignore[no-any-return]
+
+
+def cross_axis_suppression(ctx: RewardContext) -> np.ndarray:
+    """Penalize velocity on axes where the command is near zero.
+
+    When only vx is commanded, suppresses vy and vyaw drift;
+    when only vy is commanded, suppresses vx and vyaw drift; etc.
+
+    Suppression weight ramps linearly from 1.0 (cmd == 0) to 0.0 (|cmd| >= threshold).
+    Returns a *non-negative penalty* — apply a negative scale in the config.
+    """
+    commands = ctx.info["commands"]  # (N, 3): [vx, vy, vyaw]
+    actual = np.stack(
+        [ctx.linvel[:, 0], ctx.linvel[:, 1], ctx.gyro[:, 2]], axis=1
+    )  # (N, 3)
+
+    threshold = 0.1  # |cmd| above this → no suppression
+    # suppression_weight: 1.0 when cmd == 0, 0.0 when |cmd| >= threshold
+    suppression_weight = np.clip(1.0 - np.abs(commands) / threshold, 0.0, 1.0)
+    # Penalize |actual| weighted by how "zero" that axis command is
+    penalty = np.sum(suppression_weight * np.abs(actual), axis=1)
+    return penalty  # non-negative; use negative scale in config
+
+
 def forward_progress(ctx: RewardContext) -> np.ndarray:
     """Reward for forward progress relative to commanded speed."""
     commands = ctx.info["commands"]

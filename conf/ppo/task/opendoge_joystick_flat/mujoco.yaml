@@ -23,6 +23,7 @@ reward:
   scales:
     tracking_lin_vel: 1.5
     tracking_ang_vel: 0.3
+    tracking_vy: 1.0
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
     base_height: -200.0

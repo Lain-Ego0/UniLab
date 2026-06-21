@@ -25,6 +25,8 @@
 | Calf 范围 | **-2.68 ~ -1.04**（永远弯折 ≥60°） |
 | 最大站立高度 | **~0.17m**（受 calf 关节限制） |
 | PD 增益 | Kp=20, Kd=0.3（轻量机器人降低增益） |
+| 电机额定扭矩 | **1.8 Nm**（连续），峰值 6 Nm |
+| 热限 | >2Nm=300s, 3Nm=44s, 4Nm=14s, 5Nm=7s, 6Nm=5s |
 
 **关键**：`base_height_target` 不可高于 0.17，否则策略被持续惩罚无法达成的目标。
 新机器人验证方法：
@@ -98,8 +100,49 @@ max_iterations: 800           # 从 500 延长
 ```
 **结果**：best_reward=**74.8**（新纪录），action_std=**0.084**（+15%，步态更自然舒展），swing_feet_z=**1.80**。entropy 从 -14.9→-13.2（减少过拟合）。
 
-### 当前最优配置 (Round 5)
+### Round 5 (去生硬, 800 iters) — 提高熵 + 扩展指令范围
 ```yaml
+entropy_coef: 3.0e-3          # 从 1e-3 提高
+action_smooth: -0.003         # 从 -0.005 减小
+lin_vel_z: -5.0               # 从 -10 减小
+stand_still: -0.2             # NEW
+vel_limit vy: [-0.6, 0.6]     # 扩展
+vel_limit vyaw: [-1.5, 1.5]   # 扩展
+max_iterations: 800           # 延长
+```
+**结果**：best=**74.8**，action_std=**0.084**（+15%，去生硬生效）。
+
+### Round 6 (节能, 1000 iters) — 扭矩约束 + 自适应步频
+```yaml
+torques: -0.005              # NEW: PD扭矩L1惩罚（目标<1.8Nm）
+energy: -0.0001              # NEW: 机械功率约束
+max_iterations: 1000
+# 代码新增: PD扭矩估算 + 自适应步频(1.2→2.5Hz随速度)
+```
+**结果**：best=**76.2**，torques≈1.6Nm/关节（低于额定1.8Nm），swing_feet_z=2.13。
+
+### Round 7 (步高自适应尝试, 1000 iters) — 权重太低崩溃
+```yaml
+swing_feet_z: 3.0            # 从 6.0 骤降
+# 步骤目标: 0.02→0.06m（太保守）
+```
+**结果**：best=**57.9**，崩了。
+
+### Round 7a (步高恢复, 1000 iters) — 调整权重范围
+```yaml
+swing_feet_z: 5.0            # 从 3.0 回升
+# 步骤目标: 0.03→0.08m
+```
+**结果**：best=**72.9**，恢复。
+
+### Round 8 (步高含vyaw, 1000 iters) — 3D指令范数驱动步高 🔥
+```yaml
+# 代码关键: cmd_mag = norm([vx, vy, vyaw])  # 3D范数含旋转
+# 步骤目标: 0.04 + 0.08 * cmd_mag → [0.04, 0.12]
+```
+**结果**：best=**88.7**, final=**75.1**（新纪录！+16%）。
+
+### 当前最优配置 (Round 8)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
@@ -133,6 +176,31 @@ reward:
   base_height_target: 0.15
 ```
 
+## 训练成果总览
+
+| Round | Best Reward | Final | 关键改动 |
+|:-----:|:-----------:|:-----:|:---------|
+| R1 | 33.2 | 24.1 | 照搬Go2，深蹲匍匐 |
+| R2 | 32.7 | 22.1 | 扭振修复，reward反降 |
+| R3 | 54.0 | 47.6 | **keyframe修复**，翻倍 |
+| R4 | 72.9 | 67.1 | jerk平滑+高抬腿 |
+| R5 | 74.8 | 66.6 | 熵提高，去生硬 |
+| R6 | 76.2 | 69.8 | 扭矩约束+自适应步频 |
+| R7 | 57.9 | 50.3 | 步高权重太低（崩） |
+| R7a | 72.9 | 64.5 | 步高恢复 |
+| **R8** | **88.7** | **75.1** | 🔥 步高含vyaw 3D范数 |
+
+### 最终已实现功能
+- ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
+- ✅ 能量（功率）约束
+- ✅ 步频自适应：1.2→2.5 Hz（速度越快步频越高）
+- ✅ 步高自适应：0.04→0.12m（速度+旋转越大抬腿越高）
+- ✅ 步高关联 vyaw（旋转时也抬腿）
+- ✅ 动作平滑（action_smooth jerk惩罚）
+- ✅ 物理可达站高（base_height_target=0.15）
+- ✅ viser GUI 实时方向控制滑块
+- ✅ viser 完整 mesh 渲染
+
 ## 关键教训
 
 1. **keyframe 是训练质量的第一因**：default_angles 决定策略的"中立姿态"，错误 keyframe 导致策略始终对抗物理约束
@@ -141,7 +209,10 @@ reward:
 4. **平滑性靠 jerk 惩罚而非纯 action_rate**：`action_smooth`（二阶）比 `action_rate`（一阶）更有效抑制抖动，两者配合使用
 5. **足端抬升对步态美观度影响巨大**：`swing_feet_z` 从 4.0→6.0 让抬腿从"拖地"变"踏步"
 6. **步态生硬 = 过拟合**：action_std < 0.08 通常意味着策略过于确定性。提高 `entropy_coef`（1e-3→3e-3），降低 `action_smooth`、`action_rate` 惩罚权重可恢复自然度
-7. 每次修改 reward 需在本文件中追加记录轮次、数值、效果
+7. **扭矩约束需自行估算**：MuJoCo 后端不自动提供 `torques`。用 PD 公式 `tau = Kp*(target-q) - Kd*qdot` 在 `update_state` 中估算并写入 `info["torques"]`，然后在 `RewardContext` 中传 `dof_vel` 以支持 `energy` 奖励
+8. **步高目标用 3D 指令范数**：仅 vx+vy 范数会忽略旋转指令（vyaw），导致转弯时拖地。用 `norm([vx,vy,vyaw])` 驱动 `target_height`，旋转越大抬腿越高
+9. **奖励权重调参法则**：每轮只改 1-2 项，保持其它不变；若 reward 骤降 >20% 即为失败，回滚后微调
+10. 每次修改 reward 需在本文件中追加记录轮次、数值、效果
 
 ## viser 可视化修复
 
@@ -167,12 +238,16 @@ uv sync --extra mujoco --extra viser
 ### 训练
 
 ```bash
-# 标准训练（800 轮，1024 envs，CUDA）
+# 标准训练（1000 轮，1024 envs，CUDA）
 uv run train --algo ppo --task opendoge_joystick_flat --sim mujoco
 
 # 快速验证（20 轮，256 envs）
 uv run train --algo ppo --task opendoge_joystick_flat --sim mujoco \
   algo.num_envs=256 algo.max_iterations=20
+
+# 覆盖参数（不改配置文件）
+uv run train --algo ppo --task opendoge_joystick_flat --sim mujoco \
+  algo.max_iterations=2000 reward.scales.torques=-0.01
 ```
 
 ### 评估（渲染录像）
@@ -220,5 +295,3 @@ logs/rsl_rl_ppo/OpenDogeJoystickFlat/<run>/
 ├── run_summary.json    # 训练摘要
 └── events.out.*        # TensorBoard
 ```
-
-## 工作流

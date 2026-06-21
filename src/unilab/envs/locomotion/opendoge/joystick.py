@@ -164,6 +164,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         self._reward_fns: dict[str, Any] = {
             "tracking_lin_vel": rewards.tracking_lin_vel,
             "tracking_ang_vel": rewards.tracking_ang_vel,
+            "tracking_vy": self._reward_tracking_vy,
             "lin_vel_z": rewards.lin_vel_z,
             "ang_vel_xy": rewards.ang_vel_xy,
             "base_height": rewards.base_height,
@@ -307,15 +308,22 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         surface = np.asarray(sample_height(base_pos[:, :2]), dtype=get_global_dtype())
         return np.asarray(base_pos[:, 2] - surface, dtype=get_global_dtype())
 
+    def _reward_tracking_vy(self, ctx: RewardContext) -> np.ndarray:
+        """Exponential reward for lateral velocity tracking (isolated from vx)."""
+        vy_cmd = ctx.info["commands"][:, 1]
+        vy_actual = ctx.linvel[:, 1]
+        error = np.square(vy_cmd - vy_actual)
+        return np.exp(-error / ctx.tracking_sigma)  # type: ignore[no-any-return]
+
     def _reward_swing_feet_z(self, ctx: RewardContext) -> np.ndarray:
         is_swing = self.feet_phase >= 0.6
-        # Adaptive target: higher speed → higher step clearance
-        cmd_speed = np.linalg.norm(ctx.info["commands"][:, :2], axis=1)  # (N,)
-        target_height = np.clip(0.03 + 0.05 * cmd_speed / 0.6, 0.03, 0.08)  # (N,)
+        # Adaptive target: larger command (vx+vy+vyaw) → higher step
+        cmd_mag = np.linalg.norm(ctx.info["commands"], axis=1)  # (N,) 3D
+        target_height = np.clip(0.04 + 0.08 * cmd_mag, 0.04, 0.12)
         height_error = np.square(
-            self.feet_pos[:, :, 2] - target_height[:, None]  # (N,4) - (N,1)
+            self.feet_pos[:, :, 2] - target_height[:, None]
         )
-        swing_rew = np.exp(-height_error / 0.008) * is_swing
+        swing_rew = np.exp(-height_error / 0.015) * is_swing
         reward: np.ndarray = np.sum(swing_rew, axis=1) / len(self._cfg.sensor.feet_pos)
         return reward
 

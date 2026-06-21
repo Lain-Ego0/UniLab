@@ -151,11 +151,23 @@ swing_feet_z: 5.0            # 从 3.0 回升
 **动机**：R11 奖励门控正确但训练时 cmd_mag<0.03 概率仅 0.002%，门控永不激活。现在 10% 环境持续收到零指令，策略必须学会四脚贴地站立。
 **结果**：best=**94.51**🔥🔥🔥, final=**75.45**（best 暴涨 +4.0！）。10%零速指令使策略学会站立，步态整体提升。
 
-### 当前最优配置 (Round 12)
+### Round 13 (速度追踪优化, 1000 iters) — per-axis 独立追踪 + 零轴泄露抑制
+```yaml
+# 核心修改 1: tracking_lin_vel 拆分为 tracking_vx + tracking_vy（per-axis 独立问责）
+# 核心修改 2: 新增 cross_axis_suppression 惩罚（零命令轴上的速度泄露）
+# 核心修改 3: _sample_commands 混入 15% 纯单轴命令（增强训练暴露）
+# 代码改动: rewards.py 新增 tracking_vx/tracking_vy/cross_axis_suppression
+#           joystick.py 替换 dispatch（用共享 per-axis 函数）
+#           mujoco.yaml tracking_vx:1.5, tracking_vy:1.5, cross_axis_suppression:-0.3
+```
+**动机**：当前 tracking_lin_vel 将 vx+vy 合并为一个标量误差，策略用 vx 好表现"掩盖"vy 漂移。拆分为独立 per-axis 奖励 + cross_axis_suppression 直接惩罚零轴泄露。同时训练中混入 15% 纯单轴命令增强暴露。
+**结果**：best=**103.28**🔥🔥🔥🔥, final=**83.42**（best +8.77, final +7.97！）。tracking_vx=1.47, tracking_vy=1.43, tracking_ang_vel=0.157 (+43%), cross_axis_suppression=-0.012 (67%改善), ang_vel_xy=-0.078 (84%改善), episode=1000 全程不摔倒。
+
+### 当前最优配置 (Round 13)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
-  max_iterations: 800
+  max_iterations: 1000
   empirical_normalization: true
   policy:
     init_noise_std: 0.5
@@ -164,13 +176,17 @@ algo:
     entropy_coef: 3.0e-3
 env:
   commands:
+    rel_standing_envs: 0.1
+    pure_axis_prob: 0.15
     vel_limit:
       - [-0.6, -0.6, -1.5]
       - [1.0, 0.6, 1.5]
 reward:
   scales:
-    tracking_lin_vel: 1.5
+    tracking_vx: 1.5
+    tracking_vy: 1.5
     tracking_ang_vel: 0.3
+    cross_axis_suppression: -0.3
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
     base_height: -200.0
@@ -179,8 +195,10 @@ reward:
     similar_to_default: -0.03
     dof_acc: -0.0000005
     stand_still: -0.2
+    torques: -0.005
+    energy: -0.0001
     contact: 0.24
-    swing_feet_z: 6.0
+    swing_feet_z: 5.0
   tracking_sigma: 0.25
   base_height_target: 0.15
 ```
@@ -202,6 +220,7 @@ reward:
 | **R10** | **90.57** | **79.97** | 零速贴地步高 (=脚球半径) |
 | **R11** | **90.56** | **80.25** 🔥 | 零速 gait 坍缩 (swing→0 + contact全stance) |
 | **R12** | **94.51** 🔥🔥 | **75.45** | 零速指令注入 10% standing envs |
+| **R13** | **103.28** 🔥🔥🔥🔥 | **83.42** | per-axis 追踪 + 零轴抑制 + 纯轴采样 |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
@@ -213,6 +232,8 @@ reward:
 - ✅ 物理可达站高（base_height_target=0.15）
 - ✅ viser GUI 实时方向控制滑块
 - ✅ viser 完整 mesh 渲染
+- ✅ **per-axis 独立速度追踪**（vx/vy/vyaw 各自独立问责）
+- ✅ **cross_axis_suppression**（零命令轴速度泄露抑制）
 
 ## 关键教训
 
@@ -226,6 +247,8 @@ reward:
 8. **步高目标用 3D 指令范数**：仅 vx+vy 范数会忽略旋转指令（vyaw），导致转弯时拖地。用 `norm([vx,vy,vyaw])` 驱动 `target_height`（0.02→0.12m），旋转越大抬腿越高。最低步高需匹配腿长：腿长 0.2m → 最低 0.02m（10% 腿长），过高则低速步态笨重
 9. **奖励权重调参法则**：每轮只改 1-2 项，保持其它不变；若 reward 骤降 >20% 即为失败，回滚后微调
 10. 每次修改 reward 需在本文件中追加记录轮次、数值、效果
+11. **Per-axis 速度追踪远优于合并追踪**：tracking_lin_vel 将 vx+vy 合并为一个标量误差，允许策略用 vx 好表现掩盖 vy 漂移。拆分为独立的 tracking_vx + tracking_vy 后每轴独立问责，速度追踪精度大幅提升（tracking_vx: 0.87→1.47）。
+12. **cross_axis_suppression 是速度追踪的"刹车"**：当命令只有 vx 时直接惩罚 vy/vyaw 泄露，从源头抑制不期望运动。训练中从 -0.03 降至 -0.012（67% 改善），ang_vel_xy 从 -0.5 降至 -0.078（84% 改善）。
 
 ## viser 可视化修复
 

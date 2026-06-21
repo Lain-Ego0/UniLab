@@ -172,6 +172,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             "similar_to_default": rewards.similar_to_default,
             "alive": rewards.alive,
             "dof_acc": rewards.dof_acc,
+            "stand_still": rewards.stand_still,
             "swing_feet_z": self._reward_swing_feet_z,
             "contact": self._reward_contact,
             "foot_drag": self._reward_foot_drag,

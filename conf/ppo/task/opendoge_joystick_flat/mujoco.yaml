@@ -4,7 +4,7 @@ training:
   sim_backend: mujoco
 algo:
   num_envs: 1024
-  max_iterations: 500
+  max_iterations: 800
   empirical_normalization: true
   obs_groups:
     actor:
@@ -13,23 +13,24 @@ algo:
     init_noise_std: 0.5
   algorithm:
     learning_rate: 3.0e-4
-    entropy_coef: 1.0e-3
+    entropy_coef: 3.0e-3
 env:
   commands:
     vel_limit:
-      - [-0.6, -0.4, -0.8]
-      - [1.0, 0.4, 0.8]
+      - [-0.6, -0.6, -1.5]
+      - [1.0, 0.6, 1.5]
 reward:
   scales:
     tracking_lin_vel: 1.5
     tracking_ang_vel: 0.3
-    lin_vel_z: -10.0
+    lin_vel_z: -5.0
     ang_vel_xy: -0.5
     base_height: -200.0
-    action_rate: -0.01
-    action_smooth: -0.005
+    action_rate: -0.008
+    action_smooth: -0.003
     similar_to_default: -0.03
     dof_acc: -0.0000005
+    stand_still: -0.2
     contact: 0.24
     swing_feet_z: 6.0
   tracking_sigma: 0.25

@@ -44,7 +44,7 @@ class RewardConfig:
     scales: dict[str, float]
     tracking_sigma: float
     base_height_target: float
-    target_foot_height: float = 0.1
+    target_foot_height: float = 0.03
 
 
 @dataclass
@@ -319,7 +319,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         is_swing = self.feet_phase >= 0.6
         # Adaptive target: larger command (vx+vy+vyaw) → higher step
         cmd_mag = np.linalg.norm(ctx.info["commands"], axis=1)  # (N,) 3D
-        target_height = np.clip(0.04 + 0.08 * cmd_mag, 0.04, 0.12)
+        target_height = np.clip(0.015 + 0.105 * cmd_mag, 0.015, 0.12)
         height_error = np.square(
             self.feet_pos[:, :, 2] - target_height[:, None]
         )

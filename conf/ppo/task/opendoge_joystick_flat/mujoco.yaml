@@ -22,13 +22,15 @@ env:
 reward:
   scales:
     tracking_lin_vel: 1.5
-    tracking_ang_vel: 0.2
-    lin_vel_z: -5.0
+    tracking_ang_vel: 0.3
+    lin_vel_z: -10.0
     ang_vel_xy: -0.5
     base_height: -200.0
-    action_rate: -0.02
+    action_rate: -0.01
+    action_smooth: -0.005
     similar_to_default: -0.03
+    dof_acc: -0.0000005
     contact: 0.24
-    swing_feet_z: 4.0
+    swing_feet_z: 6.0
   tracking_sigma: 0.25
   base_height_target: 0.15

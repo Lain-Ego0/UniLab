@@ -74,7 +74,18 @@ keyframe: base z=0.17, thigh=0.5/0.7, calf=-1.3
 ```
 **结果**：reward=**47.6**（翻倍），base_height=**-0.03**（改善 18x），tracking_lin_vel=**1.27**（改善 2.5x），action_std=**0.07**。
 
-### 当前最优配置 (Round 3)
+### Round 4 (平稳优雅, 500 iters) — jerk 平滑 + 高抬腿 + 转向增强
+```yaml
+tracking_ang_vel: 0.3        # 从 0.2 提高（转向更灵敏）
+lin_vel_z: -10.0             # 从 -5.0 加大（抑制垂直弹跳）
+action_rate: -0.01           # 从 -0.02 减小（让位给 action_smooth）
+action_smooth: -0.005        # NEW: 二阶动作平滑（jerk 惩罚）
+dof_acc: -5.0e-7             # NEW: 关节加速度惩罚（qacc 未计算，无效）
+swing_feet_z: 6.0            # 从 4.0 提高（更高抬腿，步态更优雅）
+```
+**结果**：reward=**67.1**（+41%），best_reward=**72.9**，tracking_ang_vel=**0.25**（+107%），swing_feet_z=**1.66**（+80%），action_smooth=-0.013（jerk 平滑生效）。
+
+### 当前最优配置 (Round 4)
 ```yaml
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
@@ -94,14 +105,16 @@ env:
 reward:
   scales:
     tracking_lin_vel: 1.5
-    tracking_ang_vel: 0.2
-    lin_vel_z: -5.0
+    tracking_ang_vel: 0.3
+    lin_vel_z: -10.0
     ang_vel_xy: -0.5
     base_height: -200.0
-    action_rate: -0.02
+    action_rate: -0.01
+    action_smooth: -0.005
     similar_to_default: -0.03
+    dof_acc: -0.0000005
     contact: 0.24
-    swing_feet_z: 4.0
+    swing_feet_z: 6.0
   tracking_sigma: 0.25
   base_height_target: 0.15
 ```
@@ -111,7 +124,9 @@ reward:
 1. **keyframe 是训练质量的第一因**：default_angles 决定策略的"中立姿态"，错误 keyframe 导致策略始终对抗物理约束
 2. **base_height_target 必须经验验证可达性**：先加载 scene settle 50 步，测稳态高度，target 设在 ±10% 范围
 3. **新机器人先调 keyframe 再调 reward**：姿态问题先怀疑 keyframe，不要急于加惩罚项
-4. 每次修改 reward 需在本文件中追加记录轮次、数值、效果
+4. **平滑性靠 jerk 惩罚而非纯 action_rate**：`action_smooth`（二阶）比 `action_rate`（一阶）更有效抑制抖动，两者配合使用
+5. **足端抬升对步态美观度影响巨大**：`swing_feet_z` 从 4.0→6.0 让抬腿从"拖地"变"踏步"
+6. 每次修改 reward 需在本文件中追加记录轮次、数值、效果
 
 ## viser 可视化修复
 

@@ -160,6 +160,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         return {"obs": 49, "critic": 52}
 
     def _init_reward_functions(self):
+        self._previous_actions = np.zeros((self._num_envs, 12), dtype=np.float32)
         self._reward_fns: dict[str, Any] = {
             "tracking_lin_vel": rewards.tracking_lin_vel,
             "tracking_ang_vel": rewards.tracking_ang_vel,
@@ -167,8 +168,10 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             "ang_vel_xy": rewards.ang_vel_xy,
             "base_height": rewards.base_height,
             "action_rate": rewards.action_rate,
+            "action_smooth": rewards.action_smooth,
             "similar_to_default": rewards.similar_to_default,
             "alive": rewards.alive,
+            "dof_acc": rewards.dof_acc,
             "swing_feet_z": self._reward_swing_feet_z,
             "contact": self._reward_contact,
             "foot_drag": self._reward_foot_drag,
@@ -181,6 +184,9 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
 
         self.feet_phase[:, 1] = (self.phase + 0.5) % 1
         self.feet_phase[:, 2] = (self.phase + 0.5) % 1
+
+        # Track previous actions for action_smooth (second-order penalty)
+        state.info["previous_actions"] = state.info.get("last_actions", self._previous_actions)
 
         linvel = self.get_local_linvel()
         gyro = self.get_gyro()

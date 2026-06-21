@@ -73,6 +73,18 @@ class OpenDogeJoystickCfg(OpenDogeBaseCfg):
 
 
 class OpenDogeJoystickDomainRandomizationProvider(LocomotionDRProvider):
+    def _sample_commands(self, env: Any, num_reset: int) -> np.ndarray:
+        commands = super()._sample_commands(env, num_reset)
+        # Zero tiny commands to avoid noise drift
+        mask = np.linalg.norm(commands, axis=1) < 0.03
+        commands[mask] = 0.0
+        # Force a fraction of envs to stand still (teach zero-speed behaviour)
+        standing_prob = getattr(env.cfg.commands, "rel_standing_envs", 0.1)
+        if standing_prob > 0.0:
+            standing = np.random.uniform(size=(num_reset,)) < min(standing_prob, 1.0)
+            commands[standing] = 0.0
+        return commands
+
     def _compute_reset_obs(
         self,
         env: Any,
@@ -185,9 +197,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         # Adaptive gait frequency: faster commands → higher step rate
         cmd_speed = np.linalg.norm(state.info["commands"][:, :2], axis=1)
         freq = np.clip(1.2 + 1.3 * cmd_speed / 0.6, 1.2, 2.5)
-        self.phase = np.fmod(
-            self.phase + self._cfg.ctrl_dt * freq, 1.0
-        )
+        self.phase = np.fmod(self.phase + self._cfg.ctrl_dt * freq, 1.0)
         self.feet_phase[:, 0] = self.phase
         self.feet_phase[:, 3] = self.phase
 
@@ -319,11 +329,11 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         is_swing = self.feet_phase >= 0.6
         # Adaptive target: larger command (vx+vy+vyaw) → higher step
         cmd_mag = np.linalg.norm(ctx.info["commands"], axis=1)  # (N,) 3D
+        # Disable swing height reward at very low speed; ramp in over [0.03, 0.08]
+        swing_active = np.clip((cmd_mag - 0.03) / 0.05, 0.0, 1.0)
         target_height = np.clip(0.015 + 0.105 * cmd_mag, 0.015, 0.12)
-        height_error = np.square(
-            self.feet_pos[:, :, 2] - target_height[:, None]
-        )
-        swing_rew = np.exp(-height_error / 0.015) * is_swing
+        height_error = np.square(self.feet_pos[:, :, 2] - target_height[:, None])
+        swing_rew = np.exp(-height_error / 0.015) * is_swing * swing_active[:, None]
         reward: np.ndarray = np.sum(swing_rew, axis=1) / len(self._cfg.sensor.feet_pos)
         return reward
 
@@ -341,7 +351,9 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
     def _reward_contact(self, ctx: RewardContext) -> np.ndarray:
         contact = self.feet_force[:, :, 2] > 0.1
         res = np.zeros(self._num_envs, dtype=np.float32)
+        cmd_mag = np.linalg.norm(ctx.info["commands"], axis=1)  # (N,) 3D
         for i in range(len(self._cfg.sensor.feet_force)):
-            is_contact = (self.feet_phase[:, i] < 0.6) | (self.gait_frequency < 1.0e-8)
+            # At very low speed, expect all feet in contact (no swing phase)
+            is_contact = (self.feet_phase[:, i] < 0.6) | (cmd_mag < 0.03)
             res += (contact[:, i] == is_contact).astype(np.float32)
         return res / len(self._cfg.sensor.feet_force)

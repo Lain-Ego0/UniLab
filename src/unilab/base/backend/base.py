@@ -418,6 +418,21 @@ class SimBackend(abc.ABC):
         """
         return self.model
 
+    def get_playback_visual_model(self, env_index: int | None = None) -> Any:
+        """Return a visual model with mesh geoms for rendering/playback.
+
+        The default implementation falls back to :meth:`get_playback_model`.
+        Backends that strip visual geoms for physics should override this to
+        return the full model including mesh geoms.
+
+        Args:
+            env_index: Optional vectorized environment index.
+
+        Returns:
+            The backend model object including visual mesh geoms.
+        """
+        return self.get_playback_model(env_index)
+
     def get_actuator_gains(self) -> tuple[np.ndarray, np.ndarray]:
         """Return per-joint (kp, kd) arrays from the backend model."""
         raise NotImplementedError(

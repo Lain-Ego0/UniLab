@@ -27,7 +27,7 @@ from unilab.envs.locomotion.opendoge.base import OpenDogeBaseCfg, OpenDogeBaseEn
 
 @dataclass
 class InitState:
-    pos = [0.0, 0.0, 0.20]
+    pos = [0.0, 0.0, 0.17]
 
 
 @dataclass

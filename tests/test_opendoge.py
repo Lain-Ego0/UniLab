@@ -47,8 +47,8 @@ def test_scene_flat_loads_with_keyframe():
     mujoco.mj_resetDataKeyframe(m, d, key_id)
     mujoco.mj_forward(m, d)
 
-    assert d.qpos[2] == 0.20, f"Expected base z=0.20, got {d.qpos[2]}"
-    np.testing.assert_allclose(d.qpos[7:10], [0.0, 0.8, -1.5], atol=1e-6)
+    assert d.qpos[2] == 0.17, f"Expected base z=0.17, got {d.qpos[2]}"
+    np.testing.assert_allclose(d.qpos[7:10], [0.0, 0.5, -1.3], atol=1e-6)
 
 
 def test_backend_keyframe_qpos():
@@ -60,7 +60,7 @@ def test_backend_keyframe_qpos():
     qpos = backend.get_keyframe_qpos("home")
     assert len(qpos) == 19
     np.testing.assert_allclose(
-        qpos[-12:], [0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 1.0, -1.5, 0.0, 1.0, -1.5], atol=1e-6
+        qpos[-12:], [0.0, 0.5, -1.3, 0.0, 0.5, -1.3, 0.0, 0.7, -1.3, 0.0, 0.7, -1.3], atol=1e-6
     )
 
 
@@ -97,7 +97,7 @@ def test_env_instantiation():
     # Check default angles are from keyframe
     np.testing.assert_allclose(
         env.default_angles,
-        [0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 1.0, -1.5, 0.0, 1.0, -1.5],
+        [0.0, 0.5, -1.3, 0.0, 0.5, -1.3, 0.0, 0.7, -1.3, 0.0, 0.7, -1.3],
         atol=1e-6,
     )
 

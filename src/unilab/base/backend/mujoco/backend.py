@@ -1196,6 +1196,26 @@ class MuJoCoBackend(SimBackend):
             raise IndexError(f"env_index must be in [0, {self._num_envs - 1}], got {idx}")
         return self._model_variants[int(self._model_assignments[idx])]
 
+    def get_playback_visual_model(self, env_index: int | None = None):
+        """Return a MuJoCo model WITH visual meshes for rendering/playback.
+
+        Unlike :meth:`get_playback_model` which returns the physics-optimized
+        model (visual geoms stripped), this loads the full scene model so that
+        mesh-type geoms are available for viser or other renderers.
+
+        Args:
+            env_index: Optional vectorized environment index (ignored for
+                visual models since they share the same geometry).
+
+        Returns:
+            The full MuJoCo model including visual mesh geoms.
+        """
+        if not hasattr(self, "_cached_visual_model"):
+            self._cached_visual_model = mujoco.MjModel.from_xml_path(
+                str(self.scene_visual_model_file)
+            )
+        return self._cached_visual_model
+
     def _coerce_reset_field(
         self,
         value: np.ndarray,

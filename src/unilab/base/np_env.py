@@ -450,6 +450,17 @@ class NpEnv(ABEnv):
         """
         return self._backend.get_playback_model(env_index)
 
+    def get_playback_visual_model(self, env_index: int | None = None) -> Any:
+        """Return a visual model with mesh geoms for rendering/playback.
+
+        Args:
+            env_index: Optional vectorized environment index.
+
+        Returns:
+            The backend-specific visual playback model.
+        """
+        return self._backend.get_playback_visual_model(env_index)
+
     def set_nan_guard(self, guard: "NanGuard") -> None:
         self._nan_guard = guard
 

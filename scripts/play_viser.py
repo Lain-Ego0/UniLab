@@ -115,6 +115,10 @@ def _algo_config_dict(cfg: DictConfig) -> dict[str, Any]:
 def _load_env_playback_model(env: Any, env_index: int) -> mujoco.MjModel:
     """Resolve the exact MuJoCo model for one playback env.
 
+    Prefers the visual model (with mesh geoms) when available so that
+    web-based renderers show the full CAD geometry instead of only
+    collision primitives.
+
     Args:
         env: UniLab env exposing the playback-model contract.
         env_index: Selected vectorized environment index.
@@ -122,7 +126,10 @@ def _load_env_playback_model(env: Any, env_index: int) -> mujoco.MjModel:
     Returns:
         The MuJoCo model assigned to the selected env.
     """
-    model = env.get_playback_model(env_index)
+    if hasattr(env, "get_playback_visual_model"):
+        model = env.get_playback_visual_model(env_index)
+    else:
+        model = env.get_playback_model(env_index)
     if not isinstance(model, mujoco.MjModel):
         raise TypeError(f"Expected mujoco.MjModel for playback, got {type(model)!r}")
     return model

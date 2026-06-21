@@ -314,6 +314,18 @@ def play_viser(args: PlayInteractiveArgs, cfg: DictConfig) -> None:
             initial_value=1.0,
         )
 
+    with server.gui.add_folder("Command"):
+        vx_slider = server.gui.add_slider(
+            "vx (forward)", min=-0.6, max=1.0, step=0.05, initial_value=0.5,
+        )
+        vy_slider = server.gui.add_slider(
+            "vy (lateral)", min=-0.4, max=0.4, step=0.05, initial_value=0.0,
+        )
+        vyaw_slider = server.gui.add_slider(
+            "vyaw (yaw rate)", min=-0.8, max=0.8, step=0.05, initial_value=0.0,
+        )
+        cmd_enable = server.gui.add_checkbox("Override command", initial_value=True)
+
     controls = PlaybackControls(
         paused=bool(getattr(args, "start_paused", False)),
         speed=float(getattr(args, "speed", 1.0)),
@@ -408,6 +420,14 @@ def play_viser(args: PlayInteractiveArgs, cfg: DictConfig) -> None:
                 t0 = time.perf_counter()
 
                 controls.set_speed(float(speed_slider.value))
+                # Override velocity command from GUI sliders
+                if cmd_enable.value:
+                    env._command_override = np.array(
+                        [vx_slider.value, vy_slider.value, vyaw_slider.value],
+                        dtype=np.float32,
+                    )
+                else:
+                    env._command_override = None
                 playback_session.advance(controls)
 
                 physics_batch = playback_session.physics_state()

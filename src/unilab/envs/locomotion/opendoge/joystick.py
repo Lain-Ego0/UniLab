@@ -198,6 +198,11 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             self.feet_force[:, i, :] = self._backend.get_sensor_data(self._cfg.sensor.feet_force[i])
         for i in range(len(self._cfg.sensor.feet_pos)):
             self.feet_pos[:, i, :] = self._backend.get_sensor_data(self._cfg.sensor.feet_pos[i])
+        # Apply command override (set by viser/external tooling)
+        cmd_override = getattr(self, "_command_override", None)
+        if cmd_override is not None:
+            state.info["commands"][:] = cmd_override.reshape(1, 3)
+
         terminated = gravity[:, 2] <= 0.5
         reward = self._compute_reward(state.info, linvel, gyro, dof_pos)
         obs = self._compute_obs(

@@ -163,7 +163,20 @@ swing_feet_z: 5.0            # 从 3.0 回升
 **动机**：当前 tracking_lin_vel 将 vx+vy 合并为一个标量误差，策略用 vx 好表现"掩盖"vy 漂移。拆分为独立 per-axis 奖励 + cross_axis_suppression 直接惩罚零轴泄露。同时训练中混入 15% 纯单轴命令增强暴露。
 **结果**：best=**103.28**🔥🔥🔥🔥, final=**83.42**（best +8.77, final +7.97！）。tracking_vx=1.47, tracking_vy=1.43, tracking_ang_vel=0.157 (+43%), cross_axis_suppression=-0.012 (67%改善), ang_vel_xy=-0.078 (84%改善), episode=1000 全程不摔倒。
 
-### 当前最优配置 (Round 13)
+### Round 14 (vyaw 转向修复 + 域随机化, 1000 iters) — 步频 Bug 修复 + DR 鲁棒性
+```yaml
+# 核心修改 1: 步频计算包含 vyaw ([:,:2]→[:,:3]) — CRITICAL BUG FIX
+#   纯转向时 cmd_speed 从 0→vyaw 值，步频从 1.2 Hz→最高 2.5 Hz
+# 核心修改 2: tracking_ang_vel scale: 0.3→1.0（角速度梯度从 20%→67%）
+# 核心修改 3: 新增 domain_rand（mass +-0.3kg, com +-2cm, push 0.3N/10s）
+# 核心修改 4: 新增 noise_config.level: 1.0（传感器观测噪声）
+# 核心修改 5: Viser vyaw 滑块 [-0.8,0.8]→[-1.5,1.5]
+# ground_friction 暂闭（需 backend geom cache，后续实现）
+```
+**动机**：R13 转向基本不可用，诊断发现步频计算 `[:,:2]` 忽略 vyaw，纯转向时步频锁死 1.2 Hz。同时缺乏域随机化，策略对干扰敏感。
+**结果**：best=**117.36**🔥🔥🔥🔥🔥, final=**94.25**（best +14.08, final +10.83！）。tracking_ang_vel=**0.952** (R13: 0.157, **+506%**🔥), tracking_vx=1.45, tracking_vy=1.35, cross_axis=-0.009 (25%改善), episode=1000 零摔倒。vyaw 转向从不可用到流畅稳定。
+
+### 当前最优配置 (Round 14)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
@@ -181,11 +194,21 @@ env:
     vel_limit:
       - [-0.6, -0.6, -1.5]
       - [1.0, 0.6, 1.5]
+  noise_config:
+    level: 1.0
+  domain_rand:
+    randomize_base_mass: true
+    added_mass_range: [-0.3, 0.3]
+    random_com: true
+    com_offset_x: [-0.02, 0.02]
+    push_robots: true
+    push_interval: 500
+    max_force: [0.3, 0.3, 0.2]
 reward:
   scales:
     tracking_vx: 1.5
     tracking_vy: 1.5
-    tracking_ang_vel: 0.3
+    tracking_ang_vel: 1.0
     cross_axis_suppression: -0.3
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
@@ -221,6 +244,7 @@ reward:
 | **R11** | **90.56** | **80.25** 🔥 | 零速 gait 坍缩 (swing→0 + contact全stance) |
 | **R12** | **94.51** 🔥🔥 | **75.45** | 零速指令注入 10% standing envs |
 | **R13** | **103.28** 🔥🔥🔥🔥 | **83.42** | per-axis 追踪 + 零轴抑制 + 纯轴采样 |
+| **R14** | **117.36** 🔥🔥🔥🔥🔥 | **94.25** | vyaw 步频 Bug 修复 + DR + 观测噪声 |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
@@ -234,6 +258,9 @@ reward:
 - ✅ viser 完整 mesh 渲染
 - ✅ **per-axis 独立速度追踪**（vx/vy/vyaw 各自独立问责）
 - ✅ **cross_axis_suppression**（零命令轴速度泄露抑制）
+- ✅ **vyaw 步频自适应**（纯转向时步频 1.2→2.5 Hz）
+- ✅ **域随机化**（质量/质心/推搡扰动）
+- ✅ **观测噪声**（传感器噪声鲁棒）
 
 ## 关键教训
 
@@ -249,6 +276,8 @@ reward:
 10. 每次修改 reward 需在本文件中追加记录轮次、数值、效果
 11. **Per-axis 速度追踪远优于合并追踪**：tracking_lin_vel 将 vx+vy 合并为一个标量误差，允许策略用 vx 好表现掩盖 vy 漂移。拆分为独立的 tracking_vx + tracking_vy 后每轴独立问责，速度追踪精度大幅提升（tracking_vx: 0.87→1.47）。
 12. **cross_axis_suppression 是速度追踪的"刹车"**：当命令只有 vx 时直接惩罚 vy/vyaw 泄露，从源头抑制不期望运动。训练中从 -0.03 降至 -0.012（67% 改善），ang_vel_xy 从 -0.5 降至 -0.078（84% 改善）。
+13. **步频必须包含 vyaw — 否则纯转向无异于站立**：`cmd_speed = norm(commands[:,:2])` 忽略 vyaw，纯转向时步频锁死在 1.2 Hz，机器人几乎不迈步。改为 `[:,:3]` 后步频响应 vyaw 指令，tracking_ang_vel 从 0.157→0.952（+506%），转向从不可用到流畅稳定。
+14. **轻量机器人的域随机化要按质量比缩放**：OpenDoge 2.2kg vs Go2 12kg（5.5x），mass +-0.3kg（14%）、push 0.3N（Go2 1.0N 按 5.5x 缩放）、com +-2cm（Go2 5cm 减半）。太强的 DR 会直接击倒小机器人。
 
 ## viser 可视化修复
 

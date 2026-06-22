@@ -231,11 +231,27 @@ swing_feet_z: 5.0            # 从 3.0 回升
 **动机**：R18 零指令仍有踱步 + 左右转向不对称。踱步因 stand_still 太弱无法抑制关节 fidgeting。转向不对称经全面诊断（XML、keyframe、vel_limit、reward）无任何机械根源，纯策略局部最优。增强 stand_still 抑制踱步 + 增强 yaw 追踪梯度消解不对称。
 **结果**：best=**145.44** 🔥🔥🔥🔥🔥🔥🔥, final=**110.21** 🔥（best **+6.64**, final **+9.19**，双双新纪录！）。tracking_vx=1.42, tracking_vy=1.27, tracking_ang_vel=1.437/1.5 (norm 0.958, +0.009), stand_still=-0.042 (偏差↓16%), zero_command_stillness=0.338, episode=1000 零摔倒。
 
-### 当前最优配置 (Round 19)
+### Round 20 (lin_vel_z + action_smooth 翻倍, 1000 iters) — 纵向震荡过度压制
+```yaml
+lin_vel_z: -10.0             # 从 -5.0 翻倍（强压纵向震荡）
+action_smooth: -0.005        # 从 -0.003 增强（67% jerk 惩罚）
+```
+**动机**：进一步压制弹跳和抖动。
+**结果**：best=**145.35**, final=**113.23** 🔥。vy 追平 vx（对称化完全生效），但步高过小、步频过快——`lin_vel_z:-10.0` 过强压制纵向震荡，策略选择极小碎步保持身体平板滑行，步态不自然。
+
+### Round 21 (释放纵向震荡, 1000 iters) — lin_vel_z 回退 + action_smooth 微降
+```yaml
+lin_vel_z: -4.0              # 从 -10.0 回退（低于 R19 的 -5.0，进一步释放自然步态震荡）
+action_smooth: -0.004        # 从 -0.005 微降（允许更动态的迈步动作）
+```
+**动机**：R20 的 `lin_vel_z:-10.0` 与 `swing_feet_z:5.0` 冲突——抬腿需要身体竖向运动，竖向运动却被 `lin_vel_z` 强惩罚。`lin_vel_z` 梯度（`20*vz`）远超 `swing_feet_z` 的指数梯度，策略放弃抬腿、选择小碎步滑行。减小竖向惩罚到比 R19 更低（-4.0 vs -5.0），让自然步态的竖向震荡得以释放。同时微降 `action_smooth` 避免过度平滑抑制动态迈步。
+**结果**：best=**145.30**, final=**109.31**, episode=1000 零摔倒。tracking_vx=1.405, tracking_vy=1.191, tracking_ang_vel=1.435 (norm 0.957), cross_axis=-0.012, ang_vel_xy=-0.086, stand_still=-0.034, zero_command_stillness=0.297, swing_feet_z=1.17。
+
+### 当前最优配置 (Round 21)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
-  max_iterations: 1000
+  max_iterations: 500
   empirical_normalization: true
   policy:
     init_noise_std: 0.5
@@ -265,11 +281,11 @@ reward:
     tracking_vy: 1.5
     tracking_ang_vel: 1.5
     cross_axis_suppression: -0.6
-    lin_vel_z: -5.0
+    lin_vel_z: -4.0
     ang_vel_xy: -0.5
     base_height: -200.0
     action_rate: -0.008
-    action_smooth: -0.003
+    action_smooth: -0.004
     similar_to_default: -0.03
     dof_acc: -0.0000005
     stand_still: -0.5
@@ -306,7 +322,8 @@ reward:
 | **R17** | **118.89** | **97.55** | 保留对称 vx + 回退 L1 cross_axis (R16 修复) |
 | **R18** | **138.80** 🔥🔥🔥🔥🔥🔥 | **101.02** 🔥 | zero_command_stillness (σ=0.01, +19.91 best!) |
 | **R19** | **145.44** 🔥🔥🔥🔥🔥🔥🔥 | **110.21** 🔥 | stand_still ↑2.5x + tracking_ang_vel ↑1.5x |
-| **R20** | **145.35** | **113.23** 🔥 | lin_vel_z ↑2x + action_smooth ↑67%, vy追平vx! |
+| **R20** | **145.35** | **113.23** 🔥 | lin_vel_z ↑2x + action_smooth ↑67%, vy追平vx! 步高小步频快 |
+| **R21** | **145.30** | **109.31** | lin_vel_z -4.0 释放震荡 + action_smooth -0.004 |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
@@ -343,6 +360,7 @@ reward:
 14. **轻量机器人的域随机化要按质量比缩放**：OpenDoge 2.2kg vs Go2 12kg（5.5x），mass +-0.3kg（14%）、push 0.3N（Go2 1.0N 按 5.5x 缩放）、com +-2cm（Go2 5cm 减半）。太强的 DR 会直接击倒小机器人。
 15. **零速漂移的根因通常是观测盲区而非奖励不对称**：当奖励函数在零指令时对称（tracking_vx 用指数型、cross_axis_suppression 用绝对值），漂移方向取决于默认姿态的不对称性，但策略无法纠正漂移的本质原因是 actor 缺少 linvel 观测——它"看不见"自己在漂移。添加 noisy linvel 到 actor obs 让策略获得直接速度反馈，零指令时可主动抑制漂移。这是比单纯增强惩罚项更根本的修复。
 16. **二次惩罚 (L2) 在 cross_axis 场景下实证失败**：理论上 L2 对小漂移宽容、对大漂移严惩更优，但实践中 L2 梯度 `2|v|` 在 |v|>0.05 即超过 L1 的恒定梯度 1.0，配合 scale -6.0 后梯度放大到 `12|v|`（L1 的 `0.6`），策略被迫过度关注寄生速度抑制而牺牲主轴追踪。**L1 对零轴速度抑制已足够有效**。
+17. **`lin_vel_z` 过度压制会摧毁步态**：`lin_vel_z` 惩罚所有竖向速度（含迈步必有的自然身体起伏），梯度 `2*scale*|vz|`（scale=-10 时为 `20|vz|`）远超 `swing_feet_z` 的指数梯度。过强的 `lin_vel_z` 迫使策略放弃抬腿（因为抬腿→身体微降→下一步推起→身体微升→全程被罚），选择极小碎步保持身体平板滑行。**竖向震荡是自然步态的副产品，只能适度约束不能彻底消灭**。OpenDoge（2.2kg）的合理范围约 `-3.0~-5.0`，`-10.0` 已明显过度。
 
 ## viser 可视化修复
 

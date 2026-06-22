@@ -36,7 +36,7 @@ reward:
   scales:
     tracking_vx: 1.5
     tracking_vy: 1.5
-    tracking_ang_vel: 1.0
+    tracking_ang_vel: 1.5
     cross_axis_suppression: -0.6
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
@@ -45,7 +45,7 @@ reward:
     action_smooth: -0.003
     similar_to_default: -0.03
     dof_acc: -0.0000005
-    stand_still: -0.2
+    stand_still: -0.5
     zero_command_stillness: 3.0
     torques: -0.005
     energy: -0.0001

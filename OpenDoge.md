@@ -219,7 +219,19 @@ swing_feet_z: 5.0            # 从 3.0 回升
 **动机**：R17 零指令下仍有微动。根因是 tracking_vx/vy 的 σ=0.25 在 v→0 时梯度近零（v=0.05 仅差 0.015），驱动策略到完美静止的力太弱。新增极紧 σ 专用奖励彻底解决。
 **结果**：best=**138.80** 🔥🔥🔥🔥🔥🔥, final=**101.02** 🔥（best **+19.91**, final **+3.47**，双双新纪录！）。tracking_vx=1.45, tracking_vy=1.25, tracking_ang_vel=0.949, cross_axis=-0.012, ang_vel_xy=-0.073, zero_command_stillness=0.337 (+12x 从 0.028), episode=1000 零摔倒。静止奖励不仅修复了零指令漂移，更整体提升了策略质量——**首次突破 best 130+ 和 final 100+**。
 
-### 当前最优配置 (Round 18)
+### Round 19 (踱步抑制 + 转向增强, 1500 iters) — stand_still 增强 + tracking_ang_vel 提权
+```yaml
+# 核心修改 1: stand_still scale: -0.2→-0.5（2.5x，零指令关节更贴近默认姿态）
+#   零指令踱步根因：zero_command_stillness 只约束身体速度，不约束关节运动
+#   增强后 per-unit 关节偏差降低 ~16%
+# 核心修改 2: tracking_ang_vel scale: 1.0→1.5（50% 增强）
+#   左右转向不对称根因：无机械/配置不对称，策略收敛到局部最优
+#   增强梯度迫使两个方向都达到高精度
+```
+**动机**：R18 零指令仍有踱步 + 左右转向不对称。踱步因 stand_still 太弱无法抑制关节 fidgeting。转向不对称经全面诊断（XML、keyframe、vel_limit、reward）无任何机械根源，纯策略局部最优。增强 stand_still 抑制踱步 + 增强 yaw 追踪梯度消解不对称。
+**结果**：best=**145.44** 🔥🔥🔥🔥🔥🔥🔥, final=**110.21** 🔥（best **+6.64**, final **+9.19**，双双新纪录！）。tracking_vx=1.42, tracking_vy=1.27, tracking_ang_vel=1.437/1.5 (norm 0.958, +0.009), stand_still=-0.042 (偏差↓16%), zero_command_stillness=0.338, episode=1000 零摔倒。
+
+### 当前最优配置 (Round 19)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
@@ -251,7 +263,7 @@ reward:
   scales:
     tracking_vx: 1.5
     tracking_vy: 1.5
-    tracking_ang_vel: 1.0
+    tracking_ang_vel: 1.5
     cross_axis_suppression: -0.6
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
@@ -260,7 +272,7 @@ reward:
     action_smooth: -0.003
     similar_to_default: -0.03
     dof_acc: -0.0000005
-    stand_still: -0.2
+    stand_still: -0.5
     zero_command_stillness: 3.0
     torques: -0.005
     energy: -0.0001
@@ -293,6 +305,7 @@ reward:
 | **R16** | **118.98** | 90.66 ❌ | vx 对称化 + quadratic cross_axis (L2 过强，失败) |
 | **R17** | **118.89** | **97.55** | 保留对称 vx + 回退 L1 cross_axis (R16 修复) |
 | **R18** | **138.80** 🔥🔥🔥🔥🔥🔥 | **101.02** 🔥 | zero_command_stillness (σ=0.01, +19.91 best!) |
+| **R19** | **145.44** 🔥🔥🔥🔥🔥🔥🔥 | **110.21** 🔥 | stand_still ↑2.5x + tracking_ang_vel ↑1.5x |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）

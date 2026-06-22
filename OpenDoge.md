@@ -377,18 +377,40 @@ tracking: all 1.5                                # 保持平衡
 # 保留: σ=0.22, hip_pos=-0.4, lin_vel_z=-4.0, max_air_time=0.25s
 ```
 **动机**：R30 证实过约束不是碎步根因——释放后全向追踪正常但步态不变。真正的根因是 tracking scale 远高于 swing（6.1 vs 6.0 最大，但 tracking 命中 95% → 实际贡献 5.87，swing 命中仅 23% → 只贡献 1.35）。追踪主导导致策略忽视步态质量（R23 的翻版）。降低追踪权重 + 提 swing 权重纠正优化重心。
+**结果**：best=**154.29**, final=**131.08**, episode=**1000 零摔倒**。tracking_vx=1.43/1.5 (95%), tracking_vy=1.60/2.0 (80%), swing_feet_z=**2.13**/8.0 (27%), feet_air_time=**0.043**。**步态恢复正常！步高 +54% vs R30。但 reward 因 tracking 权重降低而缩水。**
 
-### 当前最优配置 (Round 29)
+### Round 32 (线性追踪 + 去僵硬 + vy, 600 iters) — tracking_vel_linear 新奖励
+```yaml
+# 核心修改 1: 新增 tracking_vel_linear L1 惩罚（scale=-1.0）
+#   L1 = |cmd_xy - vel_xy|，提供恒定梯度，修复 exponential reward 低速梯度为零的数学缺陷
+# 核心修改 2: entropy_coef 3e-3→5e-3 (+67% 探索，去僵硬)
+# 核心修改 3: action_smooth -0.004→-0.002, action_rate -0.008→-0.005 (更动态)
+# 核心修改 4: tracking_vy 2.0→2.3 (+15% vy 补偿)
+# 代码改动: joystick.py 新增 _reward_tracking_vel_linear
+```
+**动机**：R31 步态恢复但低速仍不动 + 动作僵硬 + vy 偏弱。exponential reward 的本质缺陷——gradient ∝ error → 0 as error → 0，无论怎么调 σ 低速 gradient 永远弱。线性 L1 penalty 在所有速度段提供恒定 gradient，彻底解决低速追踪。
+**结果**：best=**162.07**, final=**139.68**, episode=**1000 零摔倒**。tracking_vel_linear 从 -0.58 收敛到 **-0.07**（-88%），恒定梯度压缩所有追踪误差。**低速修复 + vy 改善 + 僵硬减轻，但 linear=-1.0 过强又导致碎步回归。**
+
+### Round 33 (linear 松弛 + swing 增强, 600 iters) — 最优平衡点 🔥
+```yaml
+# 核心修改 1: tracking_vel_linear -1.0→-0.4（释放瞬时速度波动容忍度）
+# 核心修改 2: swing_feet_z 8.0→10.0 (+25% 步高激励)
+# 保留 R32: σ=0.22, entropy=5e-3, tracking vx=1.5/vy=2.3/ang_vel=1.5
+```
+**动机**：R32 linear=-1.0 恒定梯度过强，策略为追求完美匀速压制了步态周期中自然的瞬时速度波动 → 碎步。降到 -0.4 保留低速梯度 + 释放速度波动容忍；swing 提到 10.0 增强步态信号对抗残余追踪压力。
+**结果**：best=**176.01** 🔥🔥🔥🔥🔥🔥🔥, final=**154.09** 🔥🔥🔥🔥🔥🔥🔥（**双双历史纪录！**）。episode=**1000 零摔倒**。**低速追踪 ✅ + vy 侧移 ✅ + 动作自然 ✅ + 步态正常 ✅——四项全部修复。**
+
+### 当前最优配置 (Round 33)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
-  max_iterations: 800
+  max_iterations: 600
   empirical_normalization: true
   policy:
     init_noise_std: 0.5
   algorithm:
     learning_rate: 3.0e-4
-    entropy_coef: 3.0e-3
+    entropy_coef: 5.0e-3
 env:
   commands:
     rel_standing_envs: 0.1
@@ -411,14 +433,15 @@ env:
 reward:
   scales:
     tracking_vx: 1.5
-    tracking_vy: 1.5
+    tracking_vy: 2.3
     tracking_ang_vel: 1.5
+    tracking_vel_linear: -0.4
     cross_axis_suppression: -0.6
     lin_vel_z: -4.0
     ang_vel_xy: -0.5
     base_height: -200.0
-    action_rate: -0.008
-    action_smooth: -0.004
+    action_rate: -0.005
+    action_smooth: -0.002
     similar_to_default: -0.03
     dof_acc: -0.0000005
     stand_still: -0.5
@@ -426,10 +449,11 @@ reward:
     torques: -0.005
     energy: -0.0001
     contact: 0.24
-    swing_feet_z: 6.0
+    swing_feet_z: 10.0
     feet_air_time: 0.5
     joint_mirror: -0.05
-  tracking_sigma: 0.25
+    hip_pos: -0.4
+  tracking_sigma: 0.22
   base_height_target: 0.15
 ```
 
@@ -468,7 +492,9 @@ reward:
 | **R28** | **140.76** | **107.99** ⚠️ | σ=0.18 + hip_pos -0.3 + max_air 0.25s, feet_air +90%, 更平滑（reward 降因 σ 收窄不可对比） |
 | **R29** | **171.94** 🔥🔥🔥🔥🔥🔥🔥 | **146.95** 🔥🔥🔥🔥🔥🔥🔥 | 🔥 vy 2.5 非对称补偿, best+final 双历史纪录, vy 恢复但步态碎 |
 | **R30** | **171.16** | **146.21** | hip_pos -0.4 + lin_vel_z -4.0, 全向恢复但步态仍碎（tracking 占比过高） |
-| **R31** | 待训练 | 待训练 | tracking 回退 5.0 + swing_feet_z 8.0（降低追踪主导，释放步态） |
+| **R31** | **154.29** | **131.08** | tracking↓ swing↑ 8.0 → **步态恢复正常！** |
+| **R32** | **162.07** | **139.68** | +tracking_vel_linear 线性追踪, 低速修复但 linear=-1.0 过强碎步回归 |
+| **R33** | **176.01** 🔥🔥🔥🔥🔥🔥🔥 | **154.09** 🔥🔥🔥🔥🔥🔥🔥 | 🔥 linear -0.4 + swing 10.0, **best+final 双历史纪录, 四项全部修复** |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
@@ -487,7 +513,10 @@ reward:
 - ✅ **观测噪声**（传感器噪声鲁棒）
 - ✅ **actor linvel 观测**（策略可直接感知速度，零指令漂移自纠正）
 - ✅ **joint_mirror 对称惩罚**（对角线腿对关节不对称抑制，消解 vx/vy 追踪 gap）
-- ✅ **feet_air_time 飞行相奖励**（触地时奖励充分飞行相持续时间，改善步态结构）
+- ✅ **feet_air_time 飞行相奖励**（触地时奖励飞行相持续时间，max_air_time=0.25s 适配小型机器人）
+- ✅ **hip_pos 髋外摆抑制**（hip_yaw L2 惩罚，约束外摆不限制步幅）
+- ✅ **tracking_vel_linear 线性速度追踪**（L1 惩罚，恒定梯度修复 exponential 低速梯度为零的数学缺陷）
+- ✅ **非对称 actor-critic 架构**（49 维 actor 全可部署，52 维 critic 含 privileged linvel）
 
 ## 关键教训
 
@@ -511,6 +540,11 @@ reward:
 18. **增强 DR 必然降低训练 reward，但 episode 零摔才是真指标**：R22 增强 DR 后 best 降 4 分、final 降 8 分，但 episode=1000 零摔倒 + vx/vy 首次对称 — 策略在更嘈杂环境中学会了更鲁棒、更对称的行为。训练 reward 下降不一定是坏事，要结合 episode length 和追踪对称性判断。
 20. **linvel 是 sim2real 根本性 gap，不应出现在 actor 观测中**：仿真 `get_local_linvel()` 提供精确 body frame 速度，但实机无法精确获取（腿运动学累积误差、IMU 积分漂移、HiMLoco 也需额外模型）。R15 引入 linvel 修复零指令漂移但创建了跨域不可迁移的依赖。R26 将 linvel 从 actor 移除（49 维），critic 保留为 privileged info（52 维），采用非对称 actor-critic。结果 final reward +3.05，swing_feet_z 1.50 创纪录 — 策略不再依赖不可靠信号反而表现更好。
 17. **`lin_vel_z` 过度压制会摧毁步态**：`lin_vel_z` 惩罚所有竖向速度（含迈步必有的自然身体起伏），梯度 `2*scale*|vz|`（scale=-10 时为 `20|vz|`）远超 `swing_feet_z` 的指数梯度。过强的 `lin_vel_z` 迫使策略放弃抬腿（因为抬腿→身体微降→下一步推起→身体微升→全程被罚），选择极小碎步保持身体平板滑行。**竖向震荡是自然步态的副产品，只能适度约束不能彻底消灭**。OpenDoge（2.2kg）的合理范围约 `-3.0~-5.0`，`-10.0` 已明显过度。
+21. **exponential tracking reward 存在数学缺陷——低速梯度趋于零**：`exp(-e²/σ²)` 的 gradient ∝ e → 0 as e → 0。无论怎么调 σ，低指令速度时"站着不动"的惩罚永远弱。cmd=0.2m/s 时 σ=0.10 也只扣 33%。**修复方式：叠加 L1 线性 penalty `|cmd - vel|`（scale ~-0.4），提供恒定梯度。**训练期用 linvel（和 exponential tracking 一样算 reward），部署期策略不需要 linvel。
+22. **追踪权重过高挤压步态是反复出现的模式**：R23（tracking 1.8/2.0）、R29-30（tracking 1.8/2.5/1.8）、R32（linear -1.0）均出现 tracking 占主导导致碎步。**tracking 总 max 控制在 ~5.0，swing_feet_z 达到 8.0-10.0 才能保持步态质量。**
+23. **过约束（hip + lin_vel_z 同时高强度）导致"束身衣"碎步**：R29 hip_pos=-0.5 + lin_vel_z=-6.0 双重压制，策略无法自然迈步只能碎步。**约束项要逐一调，不能同时加码。**
+24. **de-stiffen 三件套有效**：同时提高 entropy（3e-3→5e-3）、降低 action_smooth（-0.004→-0.002）、降低 action_rate（-0.008→-0.005）可显著增加步态自然度，不牺牲追踪质量。
+25. **max_air_time 须按机器人尺寸缩放**：Go2(12kg) 的 0.5s→OpenDoge(2.2kg) 约 0.25s。过长的目标迫使策略用力蹬地产生颠簸。**小型机器人物参数不能照搬大型机器人。**
 
 ## viser 可视化修复
 

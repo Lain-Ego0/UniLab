@@ -4,7 +4,7 @@ training:
   sim_backend: mujoco
 algo:
   num_envs: 1024
-  max_iterations: 600
+  max_iterations: 1500
   empirical_normalization: true
   obs_groups:
     actor:
@@ -22,16 +22,25 @@ env:
       - [0.8, 0.6, 1.5]
   noise_config:
     level: 1.0
+    scale_joint_angle: 0.08
+    scale_joint_vel: 0.8
+    scale_gyro: 0.35
   domain_rand:
     randomize_base_mass: true
     added_mass_range: [-0.6, 0.6]
+    randomize_body_mass: true
+    body_mass_multiplier_range: [0.92, 1.08]
     random_com: true
     com_offset_x: [-0.03, 0.03]
+    com_offset_y: [-0.02, 0.02]
+    com_offset_z: [-0.01, 0.01]
     randomize_ground_friction: true
     ground_friction_multiplier_range: [0.7, 1.3]
+    randomize_gravity: true
+    gravity_range: [[-0.5, -0.5, -9.81], [0.5, 0.5, -9.81]]
     push_robots: true
-    push_interval: 350
-    max_force: [0.6, 0.6, 0.4]
+    push_interval: 300
+    max_force: [0.8, 0.8, 0.5]
 reward:
   scales:
     tracking_vx: 1.5

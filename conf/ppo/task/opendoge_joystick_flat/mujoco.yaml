@@ -4,7 +4,7 @@ training:
   sim_backend: mujoco
 algo:
   num_envs: 1024
-  max_iterations: 1500
+  max_iterations: 1000
   empirical_normalization: true
   obs_groups:
     actor:
@@ -17,6 +17,7 @@ algo:
 env:
   commands:
     rel_standing_envs: 0.1
+    pure_axis_prob: 0.25
     vel_limit:
       - [-0.8, -0.6, -1.5]
       - [0.8, 0.6, 1.5]
@@ -44,7 +45,7 @@ env:
 reward:
   scales:
     tracking_vx: 1.5
-    tracking_vy: 2.3
+    tracking_vy: 1.8
     tracking_ang_vel: 1.5
     cross_axis_suppression: -0.6
     lin_vel_z: -4.0
@@ -62,7 +63,7 @@ reward:
     swing_feet_z: 10.0
     feet_air_time: 0.5
     joint_mirror: -0.05
-    hip_pos: -0.4
+    hip_pos: -0.25
     tracking_vel_linear: -0.4
   tracking_sigma: 0.22
   base_height_target: 0.15

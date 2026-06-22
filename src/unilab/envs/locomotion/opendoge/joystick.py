@@ -92,7 +92,7 @@ class OpenDogeJoystickDomainRandomizationProvider(LocomotionDRProvider):
         commands = super()._sample_commands(env, num_reset)
         # Inject pure single-axis commands so the policy sees "vx-only / vy-only / vyaw-only"
         # scenarios during training (improves cross-axis suppression).
-        pure_prob = getattr(env.cfg.commands, "pure_axis_prob", 0.15)
+        pure_prob = env.cfg.commands.pure_axis_prob
         if pure_prob > 0.0:
             pure_mask = np.random.uniform(size=(num_reset,)) < min(pure_prob, 1.0)
             if np.any(pure_mask):

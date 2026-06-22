@@ -195,8 +195,8 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
 
     @property
     def obs_groups_spec(self) -> dict[str, int]:
-        # gyro(3) + gravity(3) + diff(12) + dof_vel(12) + action(12) + cmd(3) + phase(4) = 49
-        return {"obs": 49, "critic": 52}
+        # gyro(3) + gravity(3) + diff(12) + dof_vel(12) + action(12) + cmd(3) + phase(4) + linvel(3) = 52
+        return {"obs": 52, "critic": 52}
 
     def _init_reward_functions(self):
         self._previous_actions = np.zeros((self._num_envs, 12), dtype=np.float32)
@@ -292,6 +292,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         noisy_dof_vel = self._obs_noise(dof_vel, noise_cfg.scale_joint_vel)
         command = info["commands"]
         last_actions = info.get("current_actions", np.zeros_like(diff))
+        noisy_linvel = self._obs_noise(linvel, noise_cfg.scale_linvel)
         obs = np.concatenate(
             [
                 noisy_gyro,
@@ -301,6 +302,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
                 last_actions,
                 command,
                 feet_phase,
+                noisy_linvel,
             ],
             axis=1,
             dtype=get_global_dtype(),

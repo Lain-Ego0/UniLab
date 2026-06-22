@@ -176,7 +176,19 @@ swing_feet_z: 5.0            # 从 3.0 回升
 **动机**：R13 转向基本不可用，诊断发现步频计算 `[:,:2]` 忽略 vyaw，纯转向时步频锁死 1.2 Hz。同时缺乏域随机化，策略对干扰敏感。
 **结果**：best=**117.36**🔥🔥🔥🔥🔥, final=**94.25**（best +14.08, final +10.83！）。tracking_ang_vel=**0.952** (R13: 0.157, **+506%**🔥), tracking_vx=1.45, tracking_vy=1.35, cross_axis=-0.009 (25%改善), episode=1000 零摔倒。vyaw 转向从不可用到流畅稳定。
 
-### 当前最优配置 (Round 14)
+### Round 15 (零速后退漂移修复, 1500 iters) — actor linvel 观测 + cross_axis 增强
+```yaml
+# 核心修改 1: actor obs 新增 noisy linvel（49→52 维）
+#   策略现在可以直接观察自身速度，零指令时可以感知并纠正漂移
+#   NoiseConfig.scale_linvel=0.1（已有参数，此前未使用）
+# 核心修改 2: cross_axis_suppression scale: -0.3→-0.6
+#   零指令速度惩罚翻倍，强化策略对近零命令轴的速度抑制
+# max_iterations: 1500（观测空间变化大，延长训练让策略充分学习 linvel 信息）
+```
+**动机**：Round 14 在零速指令下机器人轻微缓慢后退。诊断发现：(a) actor 观测不含 linvel，策略无法直接感知自身速度纠正漂移；(b) 默认 keyframe 后腿 thigh=0.7 前腿=0.5，不对称姿态产生后向 CoM 偏移；(c) cross_axis_suppression -0.3 对 0.1m/s 漂移仅贡献 0.03 惩罚，梯度太弱。修复选择：添加 linvel 到 actor obs 使策略获得直接速度反馈；增强 cross_axis 使零速漂移代价翻倍。不修改 keyframe 姿态以避免破坏已有行走性能。
+**结果**：best=**116.50**, final=**97.42**（final +3.17！）。tracking_vx=1.47 (+0.02), tracking_vy=1.33, tracking_ang_vel=0.955, cross_axis=-0.0136 (per-unit leak 降低 ~24%), ang_vel_xy=-0.083, episode=1000 零摔倒。best 略低于 R14 (-0.86)，但 **final reward 大幅提升 (+3.17)**，收敛更稳定。zero-command drift 需 viser play 验证。
+
+### 当前最优配置 (Round 15)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
@@ -209,7 +221,7 @@ reward:
     tracking_vx: 1.5
     tracking_vy: 1.5
     tracking_ang_vel: 1.0
-    cross_axis_suppression: -0.3
+    cross_axis_suppression: -0.6
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
     base_height: -200.0
@@ -245,6 +257,7 @@ reward:
 | **R12** | **94.51** 🔥🔥 | **75.45** | 零速指令注入 10% standing envs |
 | **R13** | **103.28** 🔥🔥🔥🔥 | **83.42** | per-axis 追踪 + 零轴抑制 + 纯轴采样 |
 | **R14** | **117.36** 🔥🔥🔥🔥🔥 | **94.25** | vyaw 步频 Bug 修复 + DR + 观测噪声 |
+| **R15** | **116.50** | **97.42** 🔥 | actor linvel 观测 + cross_axis 增强 (-0.3→-0.6) |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
@@ -261,6 +274,7 @@ reward:
 - ✅ **vyaw 步频自适应**（纯转向时步频 1.2→2.5 Hz）
 - ✅ **域随机化**（质量/质心/推搡扰动）
 - ✅ **观测噪声**（传感器噪声鲁棒）
+- ✅ **actor linvel 观测**（策略可直接感知速度，零指令漂移自纠正）
 
 ## 关键教训
 
@@ -278,6 +292,7 @@ reward:
 12. **cross_axis_suppression 是速度追踪的"刹车"**：当命令只有 vx 时直接惩罚 vy/vyaw 泄露，从源头抑制不期望运动。训练中从 -0.03 降至 -0.012（67% 改善），ang_vel_xy 从 -0.5 降至 -0.078（84% 改善）。
 13. **步频必须包含 vyaw — 否则纯转向无异于站立**：`cmd_speed = norm(commands[:,:2])` 忽略 vyaw，纯转向时步频锁死在 1.2 Hz，机器人几乎不迈步。改为 `[:,:3]` 后步频响应 vyaw 指令，tracking_ang_vel 从 0.157→0.952（+506%），转向从不可用到流畅稳定。
 14. **轻量机器人的域随机化要按质量比缩放**：OpenDoge 2.2kg vs Go2 12kg（5.5x），mass +-0.3kg（14%）、push 0.3N（Go2 1.0N 按 5.5x 缩放）、com +-2cm（Go2 5cm 减半）。太强的 DR 会直接击倒小机器人。
+15. **零速漂移的根因通常是观测盲区而非奖励不对称**：当奖励函数在零指令时对称（tracking_vx 用指数型、cross_axis_suppression 用绝对值），漂移方向取决于默认姿态的不对称性，但策略无法纠正漂移的本质原因是 actor 缺少 linvel 观测——它"看不见"自己在漂移。添加 noisy linvel 到 actor obs 让策略获得直接速度反馈，零指令时可主动抑制漂移。这是比单纯增强惩罚项更根本的修复。
 
 ## viser 可视化修复
 

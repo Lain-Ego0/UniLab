@@ -73,6 +73,21 @@ class OpenDogeJoystickCfg(OpenDogeBaseCfg):
 
 
 class OpenDogeJoystickDomainRandomizationProvider(LocomotionDRProvider):
+    def __init__(
+        self,
+        *,
+        base_body_mass: np.ndarray | None = None,
+        base_geom_friction: np.ndarray | None = None,
+        ground_geom_id: int | None = None,
+    ):
+        self._base_body_mass = base_body_mass
+        self._base_geom_friction = base_geom_friction
+        self._ground_geom_id = ground_geom_id
+
+    def _get_reset_randomization_baselines(
+        self, env: Any
+    ) -> tuple[np.ndarray | None, np.ndarray | None, int | None, np.ndarray | None]:
+        return self._base_body_mass, self._base_geom_friction, self._ground_geom_id, None
     def _sample_commands(self, env: Any, num_reset: int) -> np.ndarray:
         commands = super()._sample_commands(env, num_reset)
         # Inject pure single-axis commands so the policy sees "vx-only / vy-only / vyaw-only"
@@ -163,7 +178,23 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         self._enable_reward_log = True
         self._reward_cfg = cfg.reward_config
         self._init_reward_functions()
-        self._init_domain_randomization(OpenDogeJoystickDomainRandomizationProvider())
+        base_body_mass: np.ndarray | None = None
+        if cfg.domain_rand.randomize_base_mass:
+            base_body_mass = backend.get_body_mass()
+
+        base_geom_friction: np.ndarray | None = None
+        ground_geom_id: int | None = None
+        if cfg.domain_rand.randomize_ground_friction:
+            base_geom_friction = backend.get_geom_friction()
+            ground_geom_id = backend.get_geom_id(cfg.asset.ground)
+
+        self._init_domain_randomization(
+            OpenDogeJoystickDomainRandomizationProvider(
+                base_body_mass=base_body_mass,
+                base_geom_friction=base_geom_friction,
+                ground_geom_id=ground_geom_id,
+            )
+        )
         if self._scene_terrain_origins is not None and terrain_generator is not None:
             self._spawn = TerrainSpawnManager(
                 num_envs,

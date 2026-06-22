@@ -291,7 +291,18 @@ tracking: all 1.5                                # 保持平衡
 **动机**：R23/R24 证明强 DR 与优质步态不可兼得。找到 DR 适中点（比 R22 稍强、比 R23 弱很多）+ 直接提权 `swing_feet_z` 以信号级优先步态质量。
 **结果**：best=**143.40**, final=**109.98**, episode=1000 零摔倒。swing_feet_z=**1.44** 🔥🔥（所有轮次最高！+29% vs R24），tracking_vx=1.305, tracking_vy=1.196, tracking_ang_vel=1.414, action_std=0.08, lin_vel_z=-0.036。**步态质量与鲁棒性的最佳平衡点。**
 
-### 当前最优配置 (Round 25)
+### Round 26 (消除 linvel sim2real gap, 500 iters) — 49 维 actor obs + 非对称 actor-critic 🔥
+```yaml
+# 核心修改: actor 观测移除 linvel (52→49 维)，critic 保留 privileged linvel
+#   gyro(3) + neg_gravity(3) + dof_pos_diff(12) + dof_vel(12)
+#   + last_action(12) + commands(3) + feet_phase(4) = 49 维
+# obs_groups_spec: {"obs": 49, "critic": 52}
+# 所有 R25 reward 配置保持不变
+```
+**动机**：linvel 是 sim2real 的根本性 gap——仿真有 ground truth，实机永远无法精确获取。R15 引入 linvel 修复零指令漂移，但同时创建了跨域不可迁移的依赖。正确方案：actor 不用 linvel（49 维，全部可部署），critic 保留 linvel 做 privileged 值估计（非对称 actor-critic）。
+**结果**：best=**143.08**, final=**113.03** 🔥🔥（final +3.05 vs R25！），swing_feet_z=**1.50** 🔥🔥🔥（新纪录），tracking_vx=1.41 (+0.11), tracking_vy=1.24 (+0.04), tracking_ang_vel=1.43 (+0.01), zero_command_stillness=0.26, episode=1000 零摔倒。**去掉 linvel 反而 final 更高——策略不再依赖不可靠信号，收敛更稳定。swing_feet_z 1.50 创下历史最高，证明非对称 actor-critic 完全生效。**
+
+### 当前最优配置 (Round 26)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
@@ -374,6 +385,7 @@ reward:
 | R23 | **156.60** 🔥🔥🔥 | **118.12** | tracking 提权过高，reward 虚高但压缩 gait |
 | R24 | 141.09 | 103.02 | tracking 回退但 DR 仍压制步态 |
 | **R25** | **143.40** | **109.98** | 适中 DR + swing_feet_z 6.0, gait 1.44 🔥🔥 |
+| **R26** | **143.08** | **113.03** 🔥🔥 | 🔥 49-dim actor (去 linvel), 非对称 actor-critic, swing 1.50 新纪录 |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
@@ -412,6 +424,7 @@ reward:
 16. **二次惩罚 (L2) 在 cross_axis 场景下实证失败**：理论上 L2 对小漂移宽容、对大漂移严惩更优，但实践中 L2 梯度 `2|v|` 在 |v|>0.05 即超过 L1 的恒定梯度 1.0，配合 scale -6.0 后梯度放大到 `12|v|`（L1 的 `0.6`），策略被迫过度关注寄生速度抑制而牺牲主轴追踪。**L1 对零轴速度抑制已足够有效**。
 19. **DR 强度与步态质量有直接 tradeoff，需找适中点而非最大化**：R23/R24 证明强 DR (push 0.8N/250 + friction [0.6,1.4]) 会直接压制 swing_feet_z (1.20→1.12)。增强 `swing_feet_z` 奖励 (5.0→6.0) 可以部分对抗，但根本解决方案是 DR 适度（push 0.6N/350 + friction [0.7,1.3]）。鲁棒性不是参数越大越好——找到不破坏 gait 的最大 DR 才是目标。
 18. **增强 DR 必然降低训练 reward，但 episode 零摔才是真指标**：R22 增强 DR 后 best 降 4 分、final 降 8 分，但 episode=1000 零摔倒 + vx/vy 首次对称 — 策略在更嘈杂环境中学会了更鲁棒、更对称的行为。训练 reward 下降不一定是坏事，要结合 episode length 和追踪对称性判断。
+20. **linvel 是 sim2real 根本性 gap，不应出现在 actor 观测中**：仿真 `get_local_linvel()` 提供精确 body frame 速度，但实机无法精确获取（腿运动学累积误差、IMU 积分漂移、HiMLoco 也需额外模型）。R15 引入 linvel 修复零指令漂移但创建了跨域不可迁移的依赖。R26 将 linvel 从 actor 移除（49 维），critic 保留为 privileged info（52 维），采用非对称 actor-critic。结果 final reward +3.05，swing_feet_z 1.50 创纪录 — 策略不再依赖不可靠信号反而表现更好。
 17. **`lin_vel_z` 过度压制会摧毁步态**：`lin_vel_z` 惩罚所有竖向速度（含迈步必有的自然身体起伏），梯度 `2*scale*|vz|`（scale=-10 时为 `20|vz|`）远超 `swing_feet_z` 的指数梯度。过强的 `lin_vel_z` 迫使策略放弃抬腿（因为抬腿→身体微降→下一步推起→身体微升→全程被罚），选择极小碎步保持身体平板滑行。**竖向震荡是自然步态的副产品，只能适度约束不能彻底消灭**。OpenDoge（2.2kg）的合理范围约 `-3.0~-5.0`，`-10.0` 已明显过度。
 
 ## viser 可视化修复

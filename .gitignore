@@ -39,6 +39,9 @@ htmlcov/
 .history/
 
 # Project specific
+build/
+install/
+log/
 logs/
 runs/
 run_config.json

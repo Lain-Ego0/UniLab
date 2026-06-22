@@ -92,7 +92,7 @@ def test_env_instantiation():
 
     # Check obs spec
     spec = env.obs_groups_spec
-    assert spec == {"obs": 52, "critic": 52}, f"Unexpected obs spec: {spec}"
+    assert spec == {"obs": 49, "critic": 52}, f"Unexpected obs spec: {spec}"
 
     # Check default angles are from keyframe
     np.testing.assert_allclose(
@@ -107,6 +107,6 @@ def test_env_instantiation():
     # Reset and check obs
     obs, info = env.reset(np.array([0, 1, 2, 3]))
     assert set(obs.keys()) == {"obs", "critic"}
-    assert obs["obs"].shape == (4, 52)
+    assert obs["obs"].shape == (4, 49)
     assert obs["critic"].shape == (4, 52)
     assert "commands" in info

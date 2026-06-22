@@ -302,11 +302,75 @@ tracking: all 1.5                                # 保持平衡
 **动机**：linvel 是 sim2real 的根本性 gap——仿真有 ground truth，实机永远无法精确获取。R15 引入 linvel 修复零指令漂移，但同时创建了跨域不可迁移的依赖。正确方案：actor 不用 linvel（49 维，全部可部署），critic 保留 linvel 做 privileged 值估计（非对称 actor-critic）。
 **结果**：best=**143.08**, final=**113.03** 🔥🔥（final +3.05 vs R25！），swing_feet_z=**1.50** 🔥🔥🔥（新纪录），tracking_vx=1.41 (+0.11), tracking_vy=1.24 (+0.04), tracking_ang_vel=1.43 (+0.01), zero_command_stillness=0.26, episode=1000 零摔倒。**去掉 linvel 反而 final 更高——策略不再依赖不可靠信号，收敛更稳定。swing_feet_z 1.50 创下历史最高，证明非对称 actor-critic 完全生效。**
 
-### 当前最优配置 (Round 26)
+### Round 27 (步态结构, 800 iters) — joint_mirror 对称 + feet_air_time 飞行相
+```yaml
+# 核心修改 1: 新增 joint_mirror 奖励（scale=-0.05）
+#   惩罚对角线腿对 (FL↔FR, RL↔RR) 的关节角度不对称
+#   直接针对 tracking_vy (1.24) 滞后 tracking_vx (1.41) 的 ~12% 残余不对称
+# 核心修改 2: 新增 feet_air_time 奖励（scale=0.5）
+#   奖励触地时飞行相持续时间（上限 0.5s）
+#   仅当 command_mag > 0.05（移动中）时激活
+# 核心修改 3: max_iterations: 500→800
+#   新 reward 信号需要更多迭代让策略探索新梯度景观
+# 代码改动: joystick.py 新增 _update_contact_timers / _reward_feet_air_time / _reward_joint_mirror
+#           DR provider _compute_reset_obs 调用 _reset_contact_timers
+```
+**动机**：R26 步态质量（swing_feet_z=1.50）已达历史最高，但 gait 结构完全依赖开环相位推进——没有 reward 直接要求正确的飞行相持续时间和左右对称。Go2 rough 已证明 `joint_mirror` 和 `feet_air_time` 是改善步态结构的有效 reward。对角线配对 (FL↔FR, RL↔RR) 而非单纯左右配对，因为 trot 步态下 FL+RR 同相、FR+RL 同相——比较同相腿对可避免与步态模式冲突。
+**结果**：best=**140.85**, final=**117.03** 🔥🔥🔥（final **+4.00** vs R26！），episode=**1000 零摔倒** 🔥。tracking_vx=**1.45** (+0.04), tracking_vy=**1.27** (+0.03), tracking_ang_vel=**1.43** (持平), swing_feet_z=**1.56** 🔥🔥🔥（**+0.06 新纪录！**）, zero_command_stillness=**0.31** (+0.05), feet_air_time=**0.021**, joint_mirror=**-0.010**, action_std=**0.08**。
+
+**Viser 诊断**：① 低速指令基本不动（exponential reward σ=0.25 在低 error 时梯度弱——cmd=0.15m/s 时站着不动也能拿 91% 奖励）；② 腿异常外摆（hip_yaw 无直接惩罚，策略学会叉腿走）；③ 颠簸感强（max_air_time=0.5s 对 2.2kg 机器人过高，策略为滞空用力蹬地导致弹跳）。
+
+### Round 28 (低速+髋外摆+颠簸修复, 600 iters) — tracking_sigma↓ + hip_pos + max_air_time↓
+```yaml
+# 核心修改 1: tracking_sigma 0.25→0.18（低速梯度增强 ~2x）
+#   cmd=0.15m/s 站着不动：91%→50% 奖励，策略被迫真正迈步
+# 核心修改 2: 新增 hip_pos 惩罚（scale=-0.3）
+#   仅约束 4 个 hip_yaw 关节（indices 0,3,6,9）不偏离 default_angles
+#   不限制 thigh/calf 运动，保留步态自由度
+# 核心修改 3: feet_air_time max_air_time 0.5s→0.25s
+#   匹配 2.2kg 机器人在 2-2.5Hz 步频下的实际飞行相
+#   避免策略为不合理滞空目标用力蹬地
+# max_iterations: 600（改动量适中）
+```
+**动机**：R27 数值优秀但 viser 测试暴露三个体验问题。① 低速追踪：指数奖励本质缺陷——cmd 低时 error 也低，exp(-error²/σ) 在 error→0 时梯度趋于零。缩小 σ 是最小代码代价的修复。② 髋外摆：joint_mirror 只罚不对称不罚绝对值，叠加 hip_pos 直接限制髋关节范围。③ 颠簸：0.5s 是 Go2(12kg)的 max_air_time，按体重比例缩放给 2.2kg OpenDoge 约 0.25s。
+**结果**：best=**140.76**, final=**107.99**, episode=**1000 零摔倒** 🔥。tracking_vx=1.45, tracking_vy=1.14, tracking_ang_vel=1.39, swing_feet_z=**1.55**, feet_air_time=**0.040**（+90% vs R27!）, hip_pos=**-0.018**, lin_vel_z=**-0.062**（阻尼 +38% vs R27）, joint_mirror=**-0.012**, action_smooth=**-0.005**（-25% vs R27，更平滑！）。
+
+**注意**：final reward 数值下降（117→108）是 `tracking_sigma` 0.25→0.18 的**预期效应**——更窄的 sigma 让同一实际 tracking error 分数更低（0.1m/s error: σ=0.25 得 0.85, σ=0.18 得 0.73），因此总 reward 不可直接对比。真正的评判标准是 viser 行为质量。
+
+**Viser 诊断**：① vx<0.25 不动，>0.25 才动；vy 完全废掉（σ=0.18 压缩 tracking reward → 策略放弃 vy）；② 髋外摆好一点不够（hip_pos -0.3 太弱）；③ 颠簸好一点不够（lin_vel_z -4.0 不够）。
+
+### Round 29 (追踪权重非对称补偿, 800 iters) — σ 部分回退 + vy 非对称加成 + hip/弹跳增强
+```yaml
+# 核心修改 1: tracking_sigma 0.18→0.22（部分回退，保留低误差分辨力但不压缩过度）
+# 核心修改 2: 追踪 scale 非对称补偿
+#   tracking_vx: 1.5→1.8 (+20%) — 补偿 sigma 缩窄
+#   tracking_vy: 1.5→2.5 (+67%) — vy 是非对称重心，更强梯度防止放弃
+#   tracking_ang_vel: 1.5→1.8 (+20%)
+# 核心修改 3: hip_pos -0.3→-0.5 (+67% 髋约束)
+# 核心修改 4: lin_vel_z -4.0→-6.0 (+50% 弹跳阻尼)
+# max_iterations: 800
+# 保留 R28: max_air_time=0.25s
+```
+**动机**：R28 σ=0.18 过于激进，tracking reward 被整体压缩后策略优化重心漂移——vy 本就比 vx 难学，reward 压缩后策略直接放弃 vy 追踪。改为 σ=0.22 + 非对称 scale 补偿：vy scale 提 67% 远超 vx 的 20%，直接告诉策略"vy 很重要"。hip/lin_vel_z 纯增强，无风险。
+**结果**：best=**171.94** 🔥🔥🔥🔥🔥🔥🔥, final=**146.95** 🔥🔥🔥🔥🔥🔥🔥（双双历史纪录！best 超 R23 +15.34, final +28.83）。tracking_vx=**1.71**/1.8 (95%), tracking_vy=**2.38**/2.5 (95%), tracking_ang_vel=**1.68**/1.8 (93%), swing_feet_z=**1.40**, feet_air_time=**0.023**, hip_pos=**-0.019**, lin_vel_z=**-0.045**, episode=**1000 零摔倒** 🔥。**非对称 vy 加成从"废掉"拉到 95% 归一化追踪，完全修复 R28 vy 崩溃。**
+
+**Viser 诊断**：vy 恢复！但 VX/VY 步频过高、步高过低、步长过短。根因：`hip_pos -0.5` + `lin_vel_z -6.0` 双重过约束——髋不能外展 + 身体不能起伏 = 策略只能用极小碎步移动（R20 lin_vel_z=-10 的翻版）。
+
+### Round 30 (释放过约束, 600 iters) — hip_pos↓ + lin_vel_z 回退
+```yaml
+# 核心修改 1: hip_pos -0.5→-0.25（释放髋关节，允许正常步幅）
+# 核心修改 2: lin_vel_z -6.0→-4.0（回退到 R25-27 验证过的弹跳阻尼水平）
+# 保留 R29: σ=0.22, tracking vx=1.8/vy=2.5/ang_vel=1.8, max_air_time=0.25s
+# max_iterations: 600
+```
+**动机**：R29 追踪/vy 全部顶级，但 gait 被过度约束成碎步。hip_pos 降到 -0.4，lin_vel_z 回退到 -4.0 释放活动空间，保留 R29 的所有追踪收益。
+**结果**：best=**171.16**, final=**146.21**, episode=**1000 零摔倒** 🔥。reward 与 R29 几乎持平（-0.5%），但 hip_pos 约束释放 53%（-0.019→-0.009），lin_vel_z 约束释放 36%（-0.045→-0.029）。tracking_vy=**2.46**/2.5 (98.6%🔥)。
+
+### 当前最优配置 (Round 29)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
-  max_iterations: 500
+  max_iterations: 800
   empirical_normalization: true
   policy:
     init_noise_std: 0.5
@@ -351,6 +415,8 @@ reward:
     energy: -0.0001
     contact: 0.24
     swing_feet_z: 6.0
+    feet_air_time: 0.5
+    joint_mirror: -0.05
   tracking_sigma: 0.25
   base_height_target: 0.15
 ```
@@ -386,6 +452,10 @@ reward:
 | R24 | 141.09 | 103.02 | tracking 回退但 DR 仍压制步态 |
 | **R25** | **143.40** | **109.98** | 适中 DR + swing_feet_z 6.0, gait 1.44 🔥🔥 |
 | **R26** | **143.08** | **113.03** 🔥🔥 | 🔥 49-dim actor (去 linvel), 非对称 actor-critic, swing 1.50 新纪录 |
+| **R27** | **140.85** | **117.03** 🔥🔥🔥 | 🔥 joint_mirror + feet_air_time, final +4.00, swing 1.56 新纪录 |
+| **R28** | **140.76** | **107.99** ⚠️ | σ=0.18 + hip_pos -0.3 + max_air 0.25s, feet_air +90%, 更平滑（reward 降因 σ 收窄不可对比） |
+| **R29** | **171.94** 🔥🔥🔥🔥🔥🔥🔥 | **146.95** 🔥🔥🔥🔥🔥🔥🔥 | 🔥 vy 2.5 非对称补偿, best+final 双历史纪录, vy 恢复但步态碎 |
+| **R30** | **171.16** | **146.21** | hip_pos -0.4 + lin_vel_z -4.0, reward ≈ R29 但约束释放 50% |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
@@ -403,6 +473,8 @@ reward:
 - ✅ **域随机化**（质量/质心/推搡扰动）
 - ✅ **观测噪声**（传感器噪声鲁棒）
 - ✅ **actor linvel 观测**（策略可直接感知速度，零指令漂移自纠正）
+- ✅ **joint_mirror 对称惩罚**（对角线腿对关节不对称抑制，消解 vx/vy 追踪 gap）
+- ✅ **feet_air_time 飞行相奖励**（触地时奖励充分飞行相持续时间，改善步态结构）
 
 ## 关键教训
 

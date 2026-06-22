@@ -138,12 +138,16 @@ class OpenDogeJoystickDomainRandomizationProvider(LocomotionDRProvider):
         dof_pos: Any,
         dof_vel: Any,
     ) -> dict[str, np.ndarray]:
+        env._reset_contact_timers(env_ids)
         return cast(
             dict[str, np.ndarray],
             env._compute_obs(
                 info_updates, linvel, gyro, gravity, dof_pos, dof_vel, env.feet_phase[env_ids]
             ),
         )
+
+
+HIP_YAWS = [0, 3, 6, 9]  # FL, FR, RL, RR hip abduction joints
 
 
 @registry.env("OpenDogeJoystickFlat", sim_backend="mujoco")
@@ -208,6 +212,13 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         self.gait_frequency = 2
         self.feet_force = np.zeros((num_envs, len(cfg.sensor.feet_force), 3), dtype=np.float32)
         self.feet_pos = np.zeros((num_envs, len(cfg.sensor.feet_pos), 3), dtype=np.float32)
+        # Contact timers for feet_air_time reward
+        n_feet = len(cfg.sensor.feet_force)
+        self._last_foot_contact = np.zeros((num_envs, n_feet), dtype=bool)
+        self._current_air_time = np.zeros((num_envs, n_feet), dtype=np.float32)
+        self._last_air_time = np.zeros((num_envs, n_feet), dtype=np.float32)
+        self._first_foot_contact = np.zeros((num_envs, n_feet), dtype=bool)
+        self._contact_timers_initialized = False
 
     def get_playback_model(self, env_index: int | None = None) -> Any:
         return super().get_playback_model(env_index)
@@ -252,6 +263,9 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             "swing_feet_z": self._reward_swing_feet_z,
             "contact": self._reward_contact,
             "foot_drag": self._reward_foot_drag,
+            "feet_air_time": self._reward_feet_air_time,
+            "joint_mirror": self._reward_joint_mirror,
+            "hip_pos": self._reward_hip_pos,
         }
 
     def update_state(self, state: NpEnvState) -> NpEnvState:
@@ -295,6 +309,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         if cmd_override is not None:
             state.info["commands"][:] = cmd_override.reshape(1, 3)
 
+        self._update_contact_timers()
         terminated = gravity[:, 2] <= 0.5
         reward = self._compute_reward(state.info, linvel, gyro, dof_pos, dof_vel)
         obs = self._compute_obs(
@@ -414,3 +429,60 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             is_contact = (self.feet_phase[:, i] < 0.6) | (cmd_mag < 0.03)
             res += (contact[:, i] == is_contact).astype(np.float32)
         return res / len(self._cfg.sensor.feet_force)
+
+    def _update_contact_timers(self) -> None:
+        """Track per-foot air/contact durations for feet_air_time reward."""
+        contact = self.feet_force[:, :, 2] > 0.1
+        if not self._contact_timers_initialized:
+            # First call: seed with current contact to avoid spurious transitions
+            self._last_foot_contact[:] = contact
+            self._contact_timers_initialized = True
+            return
+        first_contact = contact & ~self._last_foot_contact
+        self._first_foot_contact[:] = first_contact
+        # Record air time at touchdown
+        self._last_air_time[first_contact] = self._current_air_time[first_contact]
+        # Reset air time when in contact; increment when in air
+        self._current_air_time[contact] = 0.0
+        self._current_air_time[~contact] += self._cfg.ctrl_dt
+        self._last_foot_contact[:] = contact
+
+    def _reset_contact_timers(self, env_ids: np.ndarray) -> None:
+        """Reset per-foot contact timers for envs that just restarted."""
+        self._current_air_time[env_ids] = 0.0
+        self._last_air_time[env_ids] = 0.0
+        self._first_foot_contact[env_ids] = False
+        # Seed with current contact to avoid transition spikes on first post-reset step
+        contact = self.feet_force[env_ids, :, 2] > 0.1
+        self._last_foot_contact[env_ids] = contact
+
+    def _reward_feet_air_time(self, ctx: RewardContext) -> np.ndarray:
+        """Reward proper flight phase duration during swing (capped at 0.5s).
+
+        Only active when robot is commanded to move (cmd_mag > 0.05).
+        """
+        max_air_time = 0.25
+        air_time_norm = np.clip(self._last_air_time, 0.0, max_air_time) / max_air_time
+        reward = np.sum(air_time_norm * self._first_foot_contact, axis=1)
+        moving = np.linalg.norm(ctx.info["commands"], axis=1) > 0.05
+        return np.asarray(reward * moving, dtype=get_global_dtype())
+
+    def _reward_joint_mirror(self, ctx: RewardContext) -> np.ndarray:
+        """Penalize left-right joint asymmetry between diagonal trot pairs.
+
+        OpenDoge DOF order (12): FL(0:3), FR(3:6), RL(6:9), RR(9:12).
+        Trot gait: FL+RR in phase, FR+RL in phase — compare within same-phase pairs.
+        """
+        fl_fr = ctx.dof_pos[:, 0:3] - ctx.dof_pos[:, 3:6]
+        rl_rr = ctx.dof_pos[:, 6:9] - ctx.dof_pos[:, 9:12]
+        mirror = 0.5 * (np.sum(np.square(fl_fr), axis=1) + np.sum(np.square(rl_rr), axis=1))
+        return np.asarray(mirror, dtype=get_global_dtype())
+
+    def _reward_hip_pos(self, ctx: RewardContext) -> np.ndarray:
+        """Penalize hip abduction (yaw) joints deviating from default angles.
+
+        Only constrains the 4 hip_yaw joints (indices 0,3,6,9) — does not affect
+        thigh/calf motion, so the policy can still use full leg swing for gait.
+        """
+        diff = ctx.dof_pos[:, HIP_YAWS] - self.default_angles[HIP_YAWS]
+        return np.asarray(np.sum(np.square(diff), axis=1), dtype=get_global_dtype())

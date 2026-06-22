@@ -331,8 +331,8 @@ def play_viser(args: PlayInteractiveArgs, cfg: DictConfig) -> None:
         )
         vyaw_slider = server.gui.add_slider(
             "vyaw (yaw rate)",
-            min=-0.8,
-            max=0.8,
+            min=-1.5,
+            max=1.5,
             step=0.05,
             initial_value=0.0,
         )

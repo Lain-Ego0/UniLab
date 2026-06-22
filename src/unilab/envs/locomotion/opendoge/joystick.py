@@ -223,7 +223,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
 
     def update_state(self, state: NpEnvState) -> NpEnvState:
         # Adaptive gait frequency: faster commands → higher step rate
-        cmd_speed = np.linalg.norm(state.info["commands"][:, :2], axis=1)
+        cmd_speed = np.linalg.norm(state.info["commands"][:, :3], axis=1)
         freq = np.clip(1.2 + 1.3 * cmd_speed / 0.6, 1.2, 2.5)
         self.phase = np.fmod(self.phase + self._cfg.ctrl_dt * freq, 1.0)
         self.feet_phase[:, 0] = self.phase

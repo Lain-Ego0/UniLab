@@ -310,6 +310,29 @@ def stand_still(ctx: RewardContext, command_threshold: float = 0.1) -> np.ndarra
     return np.asarray(dof_error * stopped, dtype=get_global_dtype())
 
 
+def zero_command_stillness(
+    ctx: RewardContext,
+    command_threshold: float = 0.05,
+    stillness_sigma: float = 0.01,
+) -> np.ndarray:
+    """Positive reward for being perfectly still when no velocity command is given.
+
+    Only active when the command magnitude is below *command_threshold*.
+    Uses a tight exponential (σ=*stillness_sigma*) to strongly reward
+    near-zero body velocity where the normal tracking rewards have almost
+    no gradient left.  Returns 0 for envs with active commands.
+    """
+    cmd_mag = np.linalg.norm(ctx.info["commands"], axis=1)
+    stopped = cmd_mag < command_threshold
+    vel_mag_sq = (
+        ctx.linvel[:, 0] ** 2
+        + ctx.linvel[:, 1] ** 2
+        + ctx.gyro[:, 2] ** 2
+    )
+    stillness = np.exp(-vel_mag_sq / stillness_sigma)
+    return np.asarray(stillness * stopped, dtype=get_global_dtype())
+
+
 def joint_pos_penalty(
     ctx: RewardContext,
     *,

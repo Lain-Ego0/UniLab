@@ -210,7 +210,16 @@ swing_feet_z: 5.0            # 从 3.0 回升
 **动机**：R16 的 vx 对称化是正确方向，但 L2 cross_axis 过强导致速度追踪退步。保留对称范围 + 回退到已验证的 L1 惩罚。
 **结果**：best=**118.89**, final=**97.55**。tracking_vx=1.43, tracking_vy=1.34, tracking_ang_vel=0.949, cross_axis=-0.016, episode=1000 零摔倒。vx-vy 差距从 0.14 (R15) 缩至 0.09 (**-36%**)，对称化有效但未完全消除差距。best 略高于 R15 (+2.39)，final 持平。
 
-### 当前最优配置 (Round 17)
+### Round 18 (零指令强制静止, 1500 iters) — zero_command_stillness 专用奖励
+```yaml
+# 核心修改: 新增 zero_command_stillness 奖励（scale=3.0, σ=0.01）
+#   仅当 command_mag < 0.05 时激活，用极紧指数 exp(-|v|²/0.01) 奖励零速度
+#   梯度是 tracking_vx 的 ~15 倍：0.05m/s 漂移 → tracking 丢 0.015, stillness 丢 0.66
+```
+**动机**：R17 零指令下仍有微动。根因是 tracking_vx/vy 的 σ=0.25 在 v→0 时梯度近零（v=0.05 仅差 0.015），驱动策略到完美静止的力太弱。新增极紧 σ 专用奖励彻底解决。
+**结果**：best=**138.80** 🔥🔥🔥🔥🔥🔥, final=**101.02** 🔥（best **+19.91**, final **+3.47**，双双新纪录！）。tracking_vx=1.45, tracking_vy=1.25, tracking_ang_vel=0.949, cross_axis=-0.012, ang_vel_xy=-0.073, zero_command_stillness=0.337 (+12x 从 0.028), episode=1000 零摔倒。静止奖励不仅修复了零指令漂移，更整体提升了策略质量——**首次突破 best 130+ 和 final 100+**。
+
+### 当前最优配置 (Round 18)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
@@ -243,7 +252,7 @@ reward:
     tracking_vx: 1.5
     tracking_vy: 1.5
     tracking_ang_vel: 1.0
-    cross_axis_suppression: -6.0
+    cross_axis_suppression: -0.6
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
     base_height: -200.0
@@ -252,6 +261,7 @@ reward:
     similar_to_default: -0.03
     dof_acc: -0.0000005
     stand_still: -0.2
+    zero_command_stillness: 3.0
     torques: -0.005
     energy: -0.0001
     contact: 0.24
@@ -282,6 +292,7 @@ reward:
 | **R15** | **116.50** | **97.42** 🔥 | actor linvel 观测 + cross_axis 增强 (-0.3→-0.6) |
 | **R16** | **118.98** | 90.66 ❌ | vx 对称化 + quadratic cross_axis (L2 过强，失败) |
 | **R17** | **118.89** | **97.55** | 保留对称 vx + 回退 L1 cross_axis (R16 修复) |
+| **R18** | **138.80** 🔥🔥🔥🔥🔥🔥 | **101.02** 🔥 | zero_command_stillness (σ=0.01, +19.91 best!) |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）

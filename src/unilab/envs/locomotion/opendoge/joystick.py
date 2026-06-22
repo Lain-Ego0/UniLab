@@ -214,6 +214,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             "alive": rewards.alive,
             "dof_acc": rewards.dof_acc,
             "stand_still": rewards.stand_still,
+            "zero_command_stillness": rewards.zero_command_stillness,
             "torques": rewards.torques,
             "energy": rewards.energy,
             "swing_feet_z": self._reward_swing_feet_z,

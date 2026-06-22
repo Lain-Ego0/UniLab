@@ -188,7 +188,29 @@ swing_feet_z: 5.0            # 从 3.0 回升
 **动机**：Round 14 在零速指令下机器人轻微缓慢后退。诊断发现：(a) actor 观测不含 linvel，策略无法直接感知自身速度纠正漂移；(b) 默认 keyframe 后腿 thigh=0.7 前腿=0.5，不对称姿态产生后向 CoM 偏移；(c) cross_axis_suppression -0.3 对 0.1m/s 漂移仅贡献 0.03 惩罚，梯度太弱。修复选择：添加 linvel 到 actor obs 使策略获得直接速度反馈；增强 cross_axis 使零速漂移代价翻倍。不修改 keyframe 姿态以避免破坏已有行走性能。
 **结果**：best=**116.50**, final=**97.42**（final +3.17！）。tracking_vx=1.47 (+0.02), tracking_vy=1.33, tracking_ang_vel=0.955, cross_axis=-0.0136 (per-unit leak 降低 ~24%), ang_vel_xy=-0.083, episode=1000 零摔倒。best 略低于 R14 (-0.86)，但 **final reward 大幅提升 (+3.17)**，收敛更稳定。zero-command drift 需 viser play 验证。
 
-### 当前最优配置 (Round 15)
+### Round 16 (指令对称化 + quadratic cross_axis, 1500 iters) — vx 范围对称 + L2 惩罚
+```yaml
+# 核心修改 1: vx 指令范围 [-0.6,1.0]→[-0.8,0.8]（前后完全对称）
+#   消除训练分布的前向偏置（62%/38%→50%/50%），vy 追踪应追平 vx
+# 核心修改 2: cross_axis_suppression |v|→v²（二次惩罚）
+#   近零宽容（自然微抖不被过度压制）、远零重罚（大漂移非线性增长）
+#   新增 rewards.cross_axis_suppression_l2 函数，保留原 L1 版本不动
+# 核心修改 3: cross_axis_suppression scale: -0.6→-6.0
+#   二次值比线性小 ~10x（|v|<1 时 v² ≪ |v|），scale 同比放大以匹配惩罚力度
+```
+**动机**：R15 修复了观测盲区但 tracking_vy (1.33) 仍低于 tracking_vx (1.47)，零速漂移方向偏后。根因：(a) vx 指令不对称导致前向经验远多于后向；(b) 线性 cross_axis 在近零处梯度恒定，对微小自然抖动过度惩罚，抑制了策略探索更自然的零速站立姿态。改为对称范围 + 二次惩罚让策略在零指令时"放心站直"而非"紧张消除每一丝速度"。
+**结果**：best=**118.98** (+2.48), final=**90.66** (**-6.76** ❌)。tracking_vx=1.34 (-0.13), tracking_vy=1.24 (-0.09), cross_axis=-0.011, stand_still=-0.023。**失败**：L2 cross_axis (-6.0) 梯度过强 (12|v| vs L1 的 0.6)，策略过度压制寄生速度反而牺牲主轴追踪。vx 对称化保留，cross_axis 回退 L1。
+
+### Round 17 (R16 修复, 1500 iters) — 保留对称 vx + 回退 cross_axis L1
+```yaml
+# 核心修改 1: vx 指令范围 [-0.8,0.8]（保留 R16 的对称化）
+# 核心修改 2: cross_axis_suppression L2→L1，scale -6.0→-0.6（回退 R15 验证过的配置）
+#   教训：L2 在 v>0.05 时梯度即超过 L1，对策略的"压迫感"太强
+```
+**动机**：R16 的 vx 对称化是正确方向，但 L2 cross_axis 过强导致速度追踪退步。保留对称范围 + 回退到已验证的 L1 惩罚。
+**结果**：best=**118.89**, final=**97.55**。tracking_vx=1.43, tracking_vy=1.34, tracking_ang_vel=0.949, cross_axis=-0.016, episode=1000 零摔倒。vx-vy 差距从 0.14 (R15) 缩至 0.09 (**-36%**)，对称化有效但未完全消除差距。best 略高于 R15 (+2.39)，final 持平。
+
+### 当前最优配置 (Round 17)
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
 algo:
   num_envs: 1024
@@ -204,8 +226,8 @@ env:
     rel_standing_envs: 0.1
     pure_axis_prob: 0.15
     vel_limit:
-      - [-0.6, -0.6, -1.5]
-      - [1.0, 0.6, 1.5]
+      - [-0.8, -0.6, -1.5]
+      - [0.8, 0.6, 1.5]
   noise_config:
     level: 1.0
   domain_rand:
@@ -221,7 +243,7 @@ reward:
     tracking_vx: 1.5
     tracking_vy: 1.5
     tracking_ang_vel: 1.0
-    cross_axis_suppression: -0.6
+    cross_axis_suppression: -6.0
     lin_vel_z: -5.0
     ang_vel_xy: -0.5
     base_height: -200.0
@@ -258,6 +280,8 @@ reward:
 | **R13** | **103.28** 🔥🔥🔥🔥 | **83.42** | per-axis 追踪 + 零轴抑制 + 纯轴采样 |
 | **R14** | **117.36** 🔥🔥🔥🔥🔥 | **94.25** | vyaw 步频 Bug 修复 + DR + 观测噪声 |
 | **R15** | **116.50** | **97.42** 🔥 | actor linvel 观测 + cross_axis 增强 (-0.3→-0.6) |
+| **R16** | **118.98** | 90.66 ❌ | vx 对称化 + quadratic cross_axis (L2 过强，失败) |
+| **R17** | **118.89** | **97.55** | 保留对称 vx + 回退 L1 cross_axis (R16 修复) |
 
 ### 最终已实现功能
 - ✅ 扭矩 ~1.6 Nm/关节（<1.8 额定，安全持续运行）
@@ -293,6 +317,7 @@ reward:
 13. **步频必须包含 vyaw — 否则纯转向无异于站立**：`cmd_speed = norm(commands[:,:2])` 忽略 vyaw，纯转向时步频锁死在 1.2 Hz，机器人几乎不迈步。改为 `[:,:3]` 后步频响应 vyaw 指令，tracking_ang_vel 从 0.157→0.952（+506%），转向从不可用到流畅稳定。
 14. **轻量机器人的域随机化要按质量比缩放**：OpenDoge 2.2kg vs Go2 12kg（5.5x），mass +-0.3kg（14%）、push 0.3N（Go2 1.0N 按 5.5x 缩放）、com +-2cm（Go2 5cm 减半）。太强的 DR 会直接击倒小机器人。
 15. **零速漂移的根因通常是观测盲区而非奖励不对称**：当奖励函数在零指令时对称（tracking_vx 用指数型、cross_axis_suppression 用绝对值），漂移方向取决于默认姿态的不对称性，但策略无法纠正漂移的本质原因是 actor 缺少 linvel 观测——它"看不见"自己在漂移。添加 noisy linvel 到 actor obs 让策略获得直接速度反馈，零指令时可主动抑制漂移。这是比单纯增强惩罚项更根本的修复。
+16. **二次惩罚 (L2) 在 cross_axis 场景下实证失败**：理论上 L2 对小漂移宽容、对大漂移严惩更优，但实践中 L2 梯度 `2|v|` 在 |v|>0.05 即超过 L1 的恒定梯度 1.0，配合 scale -6.0 后梯度放大到 `12|v|`（L1 的 `0.6`），策略被迫过度关注寄生速度抑制而牺牲主轴追踪。**L1 对零轴速度抑制已足够有效**。
 
 ## viser 可视化修复
 

@@ -18,8 +18,8 @@ env:
   commands:
     rel_standing_envs: 0.1
     vel_limit:
-      - [-0.6, -0.6, -1.5]
-      - [1.0, 0.6, 1.5]
+      - [-0.8, -0.6, -1.5]
+      - [0.8, 0.6, 1.5]
   noise_config:
     level: 1.0
   domain_rand:

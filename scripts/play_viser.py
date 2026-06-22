@@ -317,15 +317,15 @@ def play_viser(args: PlayInteractiveArgs, cfg: DictConfig) -> None:
     with server.gui.add_folder("Command"):
         vx_slider = server.gui.add_slider(
             "vx (forward)",
-            min=-0.6,
-            max=1.0,
+            min=-0.8,
+            max=0.8,
             step=0.05,
             initial_value=0.5,
         )
         vy_slider = server.gui.add_slider(
             "vy (lateral)",
-            min=-0.4,
-            max=0.4,
+            min=-0.6,
+            max=0.6,
             step=0.05,
             initial_value=0.0,
         )

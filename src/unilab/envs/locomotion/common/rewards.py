@@ -103,6 +103,27 @@ def cross_axis_suppression(ctx: RewardContext) -> np.ndarray:
     return penalty  # non-negative; use negative scale in config
 
 
+def cross_axis_suppression_l2(ctx: RewardContext) -> np.ndarray:
+    """Quadratic variant of cross_axis_suppression: penalize squared velocity.
+
+    Same suppression-weight logic as the L1 version, but uses ``actual²``
+    instead of ``|actual|``.  This is more tolerant of tiny drifts (gradient
+    vanishes near zero) and harsher on larger ones (quadratic growth).
+
+    Returns a *non-negative penalty* — apply a negative scale in the config
+    (typically 5-10× larger than the L1 scale).
+    """
+    commands = ctx.info["commands"]  # (N, 3): [vx, vy, vyaw]
+    actual = np.stack(
+        [ctx.linvel[:, 0], ctx.linvel[:, 1], ctx.gyro[:, 2]], axis=1
+    )  # (N, 3)
+
+    threshold = 0.1  # |cmd| above this → no suppression
+    suppression_weight = np.clip(1.0 - np.abs(commands) / threshold, 0.0, 1.0)
+    penalty = np.sum(suppression_weight * np.square(actual), axis=1)
+    return penalty  # non-negative; use negative scale in config
+
+
 def forward_progress(ctx: RewardContext) -> np.ndarray:
     """Reward for forward progress relative to commanded speed."""
     commands = ctx.info["commands"]

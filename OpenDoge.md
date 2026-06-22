@@ -202,19 +202,6 @@ vel_limit vyaw: [-1.5, 1.5]   # 从 [-0.8, 0.8] 扩展（更强转向训练）
 max_iterations: 800           # 从 500 延长
 ```
 **结果**：best_reward=**74.8**（新纪录），action_std=**0.084**（+15%，步态更自然舒展），swing_feet_z=**1.80**。entropy 从 -14.9→-13.2（减少过拟合）。
-
-### Round 5 (去生硬, 800 iters) — 提高熵 + 扩展指令范围
-```yaml
-entropy_coef: 3.0e-3          # 从 1e-3 提高
-action_smooth: -0.003         # 从 -0.005 减小
-lin_vel_z: -5.0               # 从 -10 减小
-stand_still: -0.2             # NEW
-vel_limit vy: [-0.6, 0.6]     # 扩展
-vel_limit vyaw: [-1.5, 1.5]   # 扩展
-max_iterations: 800           # 延长
-```
-**结果**：best=**74.8**，action_std=**0.084**（+15%，去生硬生效）。
-
 ### Round 6 (节能, 1000 iters) — 扭矩约束 + 自适应步频
 ```yaml
 torques: -0.005              # NEW: PD扭矩L1惩罚（目标<1.8Nm）
@@ -503,12 +490,20 @@ tracking: all 1.5                                # 保持平衡
 **动机**：R32 linear=-1.0 恒定梯度过强，策略为追求完美匀速压制了步态周期中自然的瞬时速度波动 → 碎步。降到 -0.4 保留低速梯度 + 释放速度波动容忍；swing 提到 10.0 增强步态信号对抗残余追踪压力。
 **结果**：best=**176.01** 🔥🔥🔥🔥🔥🔥🔥, final=**154.09** 🔥🔥🔥🔥🔥🔥🔥（**双双历史纪录！**）。episode=**1000 零摔倒**。**低速追踪 ✅ + vy 侧移 ✅ + 动作自然 ✅ + 步态正常 ✅——四项全部修复。**
 
-### 当前最优配置 (Round 34)
+### 当前最优配置 (Round 35)
+
 # conf/ppo/task/opendoge_joystick_flat/mujoco.yaml
+# @package _global_
+training:
+  task_name: OpenDogeJoystickFlat
+  sim_backend: mujoco
 algo:
   num_envs: 1024
-  max_iterations: 1500
+  max_iterations: 1000
   empirical_normalization: true
+  obs_groups:
+    actor:
+      - actor
   policy:
     init_noise_std: 0.5
   algorithm:
@@ -517,37 +512,36 @@ algo:
 env:
   commands:
     rel_standing_envs: 0.1
-    pure_axis_prob: 0.15
+    pure_axis_prob: 0.25
     vel_limit:
       - [-0.8, -0.6, -1.5]
       - [0.8, 0.6, 1.5]
-	  noise_config:
-	    level: 1.0
-	    scale_joint_angle: 0.08
-	    scale_joint_vel: 0.8
-	    scale_gyro: 0.35
-	  domain_rand:
-	    randomize_base_mass: true
-	    added_mass_range: [-0.6, 0.6]
-	    randomize_body_mass: true
-	    body_mass_multiplier_range: [0.92, 1.08]
-	    random_com: true
-	    com_offset_x: [-0.03, 0.03]
-	    com_offset_y: [-0.02, 0.02]
-	    com_offset_z: [-0.01, 0.01]
-	    randomize_ground_friction: true
-	    ground_friction_multiplier_range: [0.7, 1.3]
-	    randomize_gravity: true
-	    gravity_range: [[-0.5, -0.5, -9.81], [0.5, 0.5, -9.81]]
-	    push_robots: true
-	    push_interval: 300
-	    max_force: [0.8, 0.8, 0.5]
+  noise_config:
+    level: 1.0
+    scale_joint_angle: 0.08
+    scale_joint_vel: 0.8
+    scale_gyro: 0.35
+  domain_rand:
+    randomize_base_mass: true
+    added_mass_range: [-0.6, 0.6]
+    randomize_body_mass: true
+    body_mass_multiplier_range: [0.92, 1.08]
+    random_com: true
+    com_offset_x: [-0.03, 0.03]
+    com_offset_y: [-0.02, 0.02]
+    com_offset_z: [-0.01, 0.01]
+    randomize_ground_friction: true
+    ground_friction_multiplier_range: [0.7, 1.3]
+    randomize_gravity: true
+    gravity_range: [[-0.5, -0.5, -9.81], [0.5, 0.5, -9.81]]
+    push_robots: true
+    push_interval: 300
+    max_force: [0.8, 0.8, 0.5]
 reward:
   scales:
     tracking_vx: 1.5
-    tracking_vy: 2.3
+    tracking_vy: 1.8
     tracking_ang_vel: 1.5
-    tracking_vel_linear: -0.4
     cross_axis_suppression: -0.6
     lin_vel_z: -4.0
     ang_vel_xy: -0.5
@@ -564,7 +558,8 @@ reward:
     swing_feet_z: 10.0
     feet_air_time: 0.5
     joint_mirror: -0.05
-    hip_pos: -0.4
+    hip_pos: -0.25
+    tracking_vel_linear: -0.4
   tracking_sigma: 0.22
   base_height_target: 0.15
 ```

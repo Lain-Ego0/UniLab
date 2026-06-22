@@ -266,6 +266,7 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
             "feet_air_time": self._reward_feet_air_time,
             "joint_mirror": self._reward_joint_mirror,
             "hip_pos": self._reward_hip_pos,
+            "tracking_vel_linear": self._reward_tracking_vel_linear,
         }
 
     def update_state(self, state: NpEnvState) -> NpEnvState:
@@ -477,6 +478,16 @@ class OpenDogeWalkTask(OpenDogeBaseEnv):
         rl_rr = ctx.dof_pos[:, 6:9] - ctx.dof_pos[:, 9:12]
         mirror = 0.5 * (np.sum(np.square(fl_fr), axis=1) + np.sum(np.square(rl_rr), axis=1))
         return np.asarray(mirror, dtype=get_global_dtype())
+
+    def _reward_tracking_vel_linear(self, ctx: RewardContext) -> np.ndarray:
+        """L1 penalty on |cmd_xy - vel_xy| — constant gradient at all speeds.
+
+        Fixes the exponential reward's zero-gradient-at-zero-error flaw
+        that causes the policy to ignore low-speed commands.
+        """
+        cmd_xy = ctx.info["commands"][:, :2]
+        vel_xy = ctx.linvel[:, :2]
+        return np.asarray(np.sum(np.abs(cmd_xy - vel_xy), axis=1), dtype=get_global_dtype())
 
     def _reward_hip_pos(self, ctx: RewardContext) -> np.ndarray:
         """Penalize hip abduction (yaw) joints deviating from default angles.

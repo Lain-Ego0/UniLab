@@ -40,8 +40,10 @@
 | Actor obs | 49 维 | 49 维（同 flat，全可部署） |
 | Critic obs | 52 维 | 239 维（52 + 187 height scan = 17×11 grid） |
 | Base height | 平面采样 | `base_height_from_scan()` 地形感知 |
-| Spawn | 原点 + 随机 XY | terrain cell 原点 + 随机 yaw + 高度采样 |
-| Termination | 倾斜 >60° | 倾斜 >60° + terrain out-of-bounds |
+| Spawn | 原点 + 随机 XY | `apply_spawn()` 精确地形表面采样（R4 修复） |
+| Termination | 倾斜 >60° | 倾斜 >72°（R5 放宽）+ terrain out-of-bounds |
+| Fallen detection | — | base_z < 0.05 持续 1s → truncate（R5 新增） |
+| max_episode | 20s | 30s（R5 延长） |
 | 地形专有 reward | — | undesired_contacts, feet_slide, feet_height_body, feet_gait, upward 等 |
 
 ## 地形专有 Reward
@@ -62,13 +64,16 @@
 |:-----:|:----:|:-----:|:-------:|:---------|
 | R1 | 61.5 | 37.9 | 191 | 地形首训，保守参数 + R37 reward |
 | R2 | 68.1 | 33.7 | 143 | 降地形难度 + entropy 8e-3（过高致抖动） |
-| **R3** | **94.6** 🔥 | **43.9** 🔥 | **162** | **回退 entropy 5e-3 + curriculum** |
+| R3 | 94.6 | 43.9 | 162 | 回退 entropy 5e-3 + curriculum |
+| R4 | 90.2 | 28.6 | 121 | spawn bug fix + base_height -100（反效果） |
+| **R5** | **168.1** 🔥 | **60.1** 🔥 | **243** 🔥 | **放宽终止 + 延长时间 + 倒地检测** |
 
 ### Round 1 (地形首训, 1500 iters) — 保守地形 + R37 reward
 
 ```yaml
 # 地形: 台阶 1-4cm / 斜坡 0-15% / 粗糙 0.3-1.5cm / 波浪 0-4cm / 平地 20%
 # Reward: 继承 R37 平地最优 + 7 地形专有 reward
+# Bug: origins_for 而非 apply_spawn（空中出生）
 algo.num_envs: 2048
 algo.max_iterations: 1500
 entropy_coef: 5.0e-3
@@ -76,51 +81,58 @@ entropy_coef: 5.0e-3
 
 **结果**：best=**61.45**, final=**37.91**, episode=**191**。
 
-| 指标 | 值 | 归一化 | 评估 |
-|------|-----|:---:|------|
-| tracking_vx | 1.361 | 90.7% | ✅ |
-| tracking_vy | 1.643 | 91.3% | ✅ |
-| tracking_ang_vel | 1.105 | 73.7% | ⚠️ |
-| swing_feet_z | 3.581 | 29.8% | ⚠️ |
-| ang_vel_xy | -0.672 | — | ⚠️ 地形摇摆 |
-| action_rate/smooth | -0.09/-0.04 | — | ✅ |
-
 **教训**：episode=191 摔倒频繁；reward 早期见顶（iter 166）后持续退化。
 
 ### Round 2 (降难度 + 高熵尝试, 2000 iters) — 过犹不及 ❌
 
 ```yaml
-# 地形: 台阶 1-3cm / 斜坡 0-10% / 粗糙 0.2-1.2cm / 波浪 0-3cm / 平地 25%
+# 地形: 降为台阶 1-3cm / 斜坡 0-10% / 粗糙 0.2-1.2cm / 波浪 0-3cm / 平地 25%
 # Reward: ang_vel_xy -0.7→-1.0, upward 1.0→1.5, tracking_ang_vel 1.5→1.8
-#         lin_vel_z -4.0→-5.0, action_smooth -0.002→-0.003
 algo.max_iterations: 2000
 entropy_coef: 8.0e-3          # ← 过高！
 ```
 
-**结果**：best=**68.1**, final=**33.7**, episode=**143** ❌。
+**结果**：best=**68.1**, final=**33.7**, episode=**143** ❌。action_std 0.81 动作严重抖动。
 
-| 指标 | R1 | R2 | 判定 |
-|------|:--:|:--:|:--:|
-| action_std | 0.57 | **0.81** | ❌ 过于随机 |
-| action_rate | -0.09 | **-0.16** | ❌ +80% |
-| action_smooth | -0.04 | **-0.12** | ❌ +173% |
-| episode | 191 | **143** | ❌ 反降 |
+**教训**：entropy 8e-3 过高 → 策略过于随机 → 存活率反降。
 
-**教训**：entropy 8e-3 过高 → 策略过于随机 → 动作抖动严重 + 存活率反降。
-
-### Round 3 (回退熵 + Curriculum, 2000 iters) 🔥🏆
+### Round 3 (回退熵 + Curriculum, 2000 iters)
 
 ```yaml
-# 保持 R2 地形难度 + R2 reward scales
+# 保持 R2 地形 + R2 reward scales
 # 回退: entropy 8e-3→5e-3, action_smooth -0.003→-0.002
-# 新增: terrain_curriculum enabled=true
 algo.max_iterations: 2000
-entropy_coef: 5.0e-3          # 回退 R1 值
+entropy_coef: 5.0e-3
 ```
 
-**结果**：best=**94.64**, final=**43.94**, episode=**162**。
+**结果**：best=**94.6**, final=**43.9**, episode=**162**。三项追踪全提升，身体摇摆减半。
 
-### 当前最优配置 (R3) 🏆
+### Round 4 (spawn fix + base_height 弱化, 2000 iters) ❌
+
+```yaml
+# spawn: origins_for → apply_spawn（修复空中出生 bug）
+# base_height: -200 → -100（减轻地形高度惩罚）
+# push_interval: 300 → 500
+algo.max_iterations: 2000
+```
+
+**结果**：best=**90.2**, final=**28.6**, episode=**121** ❌。spawn 修复有效但 base_height -100 导致姿态崩坏，反噬全部指标。
+
+**教训**：base_height 惩罚不能弱化，-200 是安全值；spawn fix 单独保留。
+
+### Round 5 (放宽终止 + 延长时间 + 倒地检测, 2000 iters) 🔥🏆
+
+```yaml
+# 终止: gravity_z ≤0.5→≤0.3 (60°→72°)，跌倒后给恢复机会
+# max_episode: 20s → 30s
+# 新增: 倒地检测 (base_z < 0.05 持续 1s → truncate)
+# spawn bug fix 保留
+algo.max_iterations: 2000
+```
+
+**结果**：best=**168.14**, final=**60.08**, episode=**243**。
+
+### 当前最优配置 (R5) 🏆
 
 ```yaml
 # conf/ppo/task/opendoge_joystick_rough/mujoco.yaml
@@ -141,6 +153,7 @@ algo:
     learning_rate: 3.0e-4
     entropy_coef: 5.0e-3
 env:
+  max_episode_seconds: 30.0
   scene:
     model_file: src/unilab/assets/robots/opendoge/opendoge.xml
     fragment_files:
@@ -222,62 +235,58 @@ reward:
   max_air_time: 0.25
 ```
 
-### R3 最终指标
+### R5 最终指标
 
 | Reward | 值 | Scale | 归一化 |
 |--------|-----|:---:|:---:|
-| tracking_vx | 1.401 | 1.5 | **93.4%** 🔥 |
-| tracking_vy | 1.705 | 1.8 | **94.7%** 🔥 |
-| tracking_ang_vel | 1.439 | 1.8 | **80.0%** 🔥 |
-| tracking_vel_linear | -0.093 | -0.4 | 76.8% |
-| swing_feet_z | 4.120 | 12.0 | 34.3% 🔥 |
-| feet_gait | 0.441 | 0.5 | **88.3%** |
-| upward | 5.994 | 6.0 | 99.9% |
-| ang_vel_xy | -0.547 | -1.0 | ✅ 大幅改善 |
-| lin_vel_z | -0.040 | -5.0 | 99.2% |
-| base_height | -0.010 | — | 精准 |
-| undesired_contacts | -0.001 | -1.0 | 几乎无碰撞 |
-| action_rate | -0.038 | — | ✅ 平滑 |
-| action_smooth | -0.019 | — | ✅ 平滑 |
-| torques | -0.117 | -0.005 | ✅ |
+| tracking_vx | 1.236 | 1.5 | 82.4% |
+| tracking_vy | 1.527 | 1.8 | 84.8% |
+| tracking_ang_vel | 1.143 | 1.8 | 63.5% |
+| swing_feet_z | 3.957 | 12.0 | 33.0% |
+| feet_gait | 0.412 | 0.5 | 82.4% |
+| upward | 5.698 | 6.0 | 95.0% |
+| ang_vel_xy | -0.667 | -1.0 | ✅ |
+| lin_vel_z | -0.061 | -5.0 | 98.8% |
+| base_height | -0.027 | — | 精准 |
+| undesired_contacts | -0.014 | -1.0 | 极少碰撞 |
+| action_rate | -0.063 | — | ✅ |
+| torques | -0.188 | -0.005 | 地形扭矩较高 |
 
-### 三轮对比
+### 五轮对比
 
-| 指标 | R1 | R2 | R3 | 趋势 |
-|------|:--:|:--:|:--:|:--:|
-| Best reward | 61.5 | 68.1 | **94.6** | 🔥 |
-| Final reward | 37.9 | 33.7 | **43.9** | 🔥 |
-| tracking_vx | 90.7% | 90.0% | **93.4%** | 🔥 |
-| tracking_vy | 91.3% | 92.2% | **94.7%** | 🔥 |
-| tracking_ang_vel | 73.7% | 70.0% | **80.0%** | 🔥 |
-| swing_feet_z | 3.58 | 3.76 | **4.12** | 🔥 |
-| ang_vel_xy | -0.67 | -1.13 | **-0.55** | 🔥🔥 |
-| action_rate | -0.09 | -0.16 | **-0.04** | 🔥🔥 |
-| action_smooth | -0.04 | -0.12 | **-0.02** | 🔥🔥 |
-| action_std | 0.57 | 0.81 | **0.38** | ✅ |
-| Episode | 191 | 143 | 162 | — |
+| 指标 | R1 | R2 | R3 | R4 | R5 | 趋势 |
+|------|:--:|:--:|:--:|:--:|:--:|:--:|
+| Best reward | 61.5 | 68.1 | 94.6 | 90.2 | **168.1** | 🔥🔥 |
+| Final reward | 37.9 | 33.7 | 43.9 | 28.6 | **60.1** | 🔥 |
+| Episode | 191 | 143 | 162 | 121 | **243** | 🔥 |
+| tracking_vx | 90.7% | 90.0% | 93.4% | — | 82.4% | — |
+| tracking_vy | 91.3% | 92.2% | 94.7% | — | 84.8% | — |
+| swing_feet_z | 3.58 | 3.76 | 4.12 | — | 3.96 | — |
 
 ### 与平地 R37 对比
 
-| 指标 | 平地 R37 | 地形 R3 |
+| 指标 | 平地 R37 | 地形 R5 |
 |------|:------:|:-----:|
-| tracking_vx | 1.44 (96%) | 1.40 (93%) |
-| tracking_vy | 1.68 (94%) | 1.71 (95%) |
-| tracking_ang_vel | 1.44 (96%) | 1.44 (80%) |
-| swing_feet_z | 3.32 | **4.12** 🔥 |
-| ang_vel_xy | -0.267 | -0.547 |
-| episode | **1000** | 162 |
-| best reward | **182** | 94.6 |
+| tracking_vx | 1.44 (96%) | 1.24 (82%) |
+| tracking_vy | 1.68 (94%) | 1.53 (85%) |
+| swing_feet_z | 3.32 | **3.96** 🔥 |
+| episode | **1000** | 243 |
+| best reward | **182** | 168.1 |
+
+**R5 首次让地形 best reward 接近平地水平**（168 vs 182），episode 从 162→243 (+50%)。
 
 ## 关键教训
 
 1. **地形参数要按机器人尺寸缩放，且宁小勿大**：OpenDoge 2.2kg/0.17m 站高 → 台阶 ≤3cm、斜坡 ≤10%、粗糙 ≤1.2cm。R1→R2 降难度后追踪明显改善。
 2. **entropy 在 terrain 上不能过高**：R2 entropy=8e-3 导致 action_std 0.81、动作抖动 + episode 反降。5e-3 是已验证的安全值。
 3. **地形 reward 的 scale 需要适应当前难度**：upward 1.0→1.5、ang_vel_xy -0.7→-1.0、tracking_ang_vel 1.5→1.8 在 R3 中全部正面生效。
-4. **terrain curriculum 需要配合足够的 episode length**：R3 中 curriculum enabled 但无 promote（episode 太短走不够远）。更长的 episode 或更低的 promote 阈值才能使 curriculum 真正生效。
-5. **reward 数值不可与平地对齐**：地形天然低压，「best~95 / final~45」是当前合理基线。不与平地 best=182 对比。
-6. **所有三轮都在 iter ~166 早期见顶**：策略在早期找到局部最优后持续退化。可能原因：(a) 初始探索阶段的偶然高分被 mean reward 统计放大；(b) 策略后期在困难地形 cell 上学习时破坏了早期在平坦 cell 上的表现。curriculum 未能解决此问题。
-7. **R3 viser 验证步态自然、全向追踪正常**：用户确认视觉效果满足需求。
+4. **spawn 必须用 apply_spawn 而非 origins_for**：R1-R3 的 origins_for 只取 cell 原点 Z，导致机器人在随机 XY 偏移后可能悬空或陷入地形。R4 修复后保留至今。
+5. **放宽终止条件显著提升 episode**：gravity_z 阈值 0.5→0.3（60°→72°）+ max_episode 20→30s → episode +50%（162→243）。
+6. **base_height 惩罚不能弱化**：R4 降至 -100 导致姿态崩坏，-200 是安全值。
+7. **倒地检测是宽松终止的必要配套**：放宽终止后机器人可能躺着不动，base_z < 0.05 持续 1s 截断清理僵尸 env。
+8. **terrain curriculum 需要配合足够的 episode length**：五轮中 curriculum 从未激活（episode 不够走远）。更长的 episode 或更低的 promote 阈值才能使 curriculum 真正生效。
+9. **所有轮次都在 iter ~124-166 早期见顶**：策略在早期找到局部最优后持续退化。这是地形训练的系统性问题，curriculum 理论上应该缓解但尚未生效。
+10. **reward 数值不可与平地对齐**：地形天然低压。R5「best~168 / final~60」是当前合理基线，best 首次接近平地水平。
 
 ## Viser 地形可视化修复
 

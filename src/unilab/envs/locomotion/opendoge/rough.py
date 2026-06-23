@@ -317,6 +317,10 @@ class OpenDogeJoystickRoughEnv(OpenDogeWalkTask):
         self._first_foot_contact = np.zeros((num_envs, n_feet), dtype=bool)
         self._contact_timers_initialized = False
         init_height_scan_sensor(self, cfg.terrain_scan, cfg.asset.base_name)
+        # Fallen detection: truncate if base stays too low for > 1 second.
+        self._fallen_timer = np.zeros((num_envs,), dtype=np.float32)
+        self._fallen_threshold = 0.05
+        self._fallen_timeout = 1.0
 
     @property
     def obs_groups_spec(self) -> dict[str, int]:
@@ -328,6 +332,7 @@ class OpenDogeJoystickRoughEnv(OpenDogeWalkTask):
         env_ids = np.asarray(env_indices, dtype=np.int32)
         obs, info = super().reset(env_ids)
         self._reset_contact_timers(env_ids)
+        self._fallen_timer[env_ids] = 0.0
         return obs, info
 
     # ── observation ────────────────────────────────────────────────
@@ -518,7 +523,15 @@ class OpenDogeJoystickRoughEnv(OpenDogeWalkTask):
             state.info, linvel, gyro, gravity, dof_pos, dof_vel,
             self.feet_phase,
         )
+        # Fallen detection: if base stays too low for > timeout, force truncate.
+        base_z = np.asarray(self._backend.get_base_pos()[:, 2], dtype=np.float32)
+        fallen = base_z < self._fallen_threshold
+        self._fallen_timer = np.where(fallen, self._fallen_timer + self._cfg.ctrl_dt, 0.0)
+        fallen_timeout = self._fallen_timer >= self._fallen_timeout
+
         truncated = self._compute_truncated(state)
+        if np.any(fallen_timeout):
+            np.logical_or(truncated, fallen_timeout, out=truncated)
         state = state.replace(
             obs=obs, reward=reward, terminated=terminated, truncated=truncated
         )
@@ -538,7 +551,9 @@ class OpenDogeJoystickRoughEnv(OpenDogeWalkTask):
     # ── termination / truncation ───────────────────────────────────
 
     def _compute_terminated(self, gravity: np.ndarray) -> np.ndarray:
-        return np.asarray(gravity[:, 2] <= 0.5, dtype=bool)
+        # R5: relaxed from 0.5 (≈60°) to 0.3 (≈72°) — tiny robot on terrain
+        # tips more easily and needs more recovery margin.
+        return np.asarray(gravity[:, 2] <= 0.3, dtype=bool)
 
     def _compute_truncated(self, state: NpEnvState) -> np.ndarray:
         truncated = super()._compute_truncated(state)

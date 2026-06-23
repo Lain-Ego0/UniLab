@@ -132,6 +132,7 @@ class MujocoViserScene:
         name_prefix: str = "/mujoco",
         position_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
         render_plane: bool = True,
+        terrain_cfg: Any | None = None,
     ) -> None:
         if not VISER_AVAILABLE:
             raise ImportError("viser is not installed. Install with: uv sync --extra viser")
@@ -140,8 +141,12 @@ class MujocoViserScene:
         self._name_prefix = name_prefix.rstrip("/") or "/mujoco"
         self._position_offset = np.asarray(position_offset, dtype=np.float64)
         self._render_plane = bool(render_plane)
+        self._terrain_cfg = terrain_cfg
         self._handles: dict[int, Any] = {}
+        self._terrain_handle: Any | None = None
         self._build()
+        if self._terrain_cfg is not None:
+            self._build_terrain_mesh()
 
     def reset(
         self,
@@ -150,16 +155,7 @@ class MujocoViserScene:
         position_offset: tuple[float, float, float] | None = None,
         render_plane: bool | None = None,
     ) -> None:
-        """Rebuild the viser scene for a new MuJoCo model.
-
-        Args:
-            model: MuJoCo model whose geoms should populate the scene.
-            position_offset: Optional XYZ offset applied to all geoms.
-            render_plane: Optional override for whether plane geoms should be built.
-
-        Returns:
-            None.
-        """
+        """Rebuild the viser scene for a new MuJoCo model."""
         self.close()
         self._model = model
         if position_offset is not None:
@@ -167,12 +163,72 @@ class MujocoViserScene:
         if render_plane is not None:
             self._render_plane = bool(render_plane)
         self._build()
+        if self._terrain_cfg is not None:
+            self._build_terrain_mesh()
 
     def close(self) -> None:
         """Remove all scene handles owned by this adapter."""
         for handle in self._handles.values():
             handle.remove()
         self._handles.clear()
+        if self._terrain_handle is not None:
+            self._terrain_handle.remove()
+            self._terrain_handle = None
+
+    # ------------------------------------------------------------------ #
+    # Terrain mesh                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _build_terrain_mesh(self) -> None:
+        """Generate a triangle mesh from the training terrain config.
+
+        Uses the exact same :class:`TerrainGenerator` that produced the
+        heightfield during training, so the visual surface matches the
+        physics terrain bit-for-bit.
+        """
+        from unilab.terrains import TerrainGenerator
+
+        gt = TerrainGenerator(self._terrain_cfg).generate()
+        heights = gt.heights_yx  # (nrow, ncol) world-space Z, row-major
+        nrow, ncol = heights.shape
+        hs = gt.horizontal_scale
+
+        # --- vertices ---------------------------------------------------
+        x = np.linspace(-gt.size[0] / 2, gt.size[0] / 2, ncol, dtype=np.float64)
+        y = np.linspace(-gt.size[1] / 2, gt.size[1] / 2, nrow, dtype=np.float64)
+        xx, yy = np.meshgrid(x, y)
+        zz = np.asarray(heights, dtype=np.float64)
+        verts = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
+
+        # --- faces (CCW from +Z) ----------------------------------------
+        max_samples = 150
+        stride_r = max(1, nrow // max_samples)
+        stride_c = max(1, ncol // max_samples)
+        if stride_r > 1 or stride_c > 1:
+            verts = verts.reshape(nrow, ncol, 3)[::stride_r, ::stride_c, :]
+            verts = verts.reshape(-1, 3)
+            nrow_s = (nrow + stride_r - 1) // stride_r
+            ncol_s = (ncol + stride_c - 1) // stride_c
+        else:
+            nrow_s, ncol_s = nrow, ncol
+
+        faces: list[tuple[int, int, int]] = []
+        for r in range(nrow_s - 1):
+            for c in range(ncol_s - 1):
+                a = r * ncol_s + c
+                b = a + 1
+                d = a + ncol_s
+                e = d + 1
+                faces.append((a, b, d))
+                faces.append((b, e, d))
+
+        self._terrain_handle = self._server.scene.add_mesh_simple(
+            f"{self._name_prefix}/terrain",
+            vertices=verts.astype(np.float32),
+            faces=np.array(faces, dtype=np.int32),
+            color=(0.55, 0.55, 0.55),
+            opacity=1.0,
+        )
 
     # ------------------------------------------------------------------ #
     # Scene construction                                                  #
@@ -262,6 +318,12 @@ class MujocoViserScene:
                         color=color,
                         opacity=opacity,
                     )
+
+            elif geom_type == mujoco.mjtGeom.mjGEOM_HFIELD:
+                # Hfield terrain is rendered separately via the terrain generator
+                # config (see _build_terrain_mesh).  Skip here so the old
+                # per-geom loop does not try to handle it.
+                continue
 
             if handle is not None:
                 self._handles[i] = handle

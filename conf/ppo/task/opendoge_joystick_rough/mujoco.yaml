@@ -1,0 +1,137 @@
+# @package _global_
+training:
+  task_name: OpenDogeJoystickRough
+  sim_backend: mujoco
+  play_steps: 500
+  play_env_num: 16
+  render_spacing: 0.0
+  cam_tracking: true
+  cam_tracking_env_idx: 0
+  cam_tracking_extra_envs: 9
+
+interactive:
+  action_mode: policy
+  policy_obs_mode: auto
+  camera_follow_body: true
+  use_env_visual_model: false
+
+algo:
+  num_envs: 2048
+  max_iterations: 2000
+  empirical_normalization: true
+  obs_groups:
+    actor:
+      - actor
+    critic:
+      - critic
+  policy:
+    init_noise_std: 0.5
+  algorithm:
+    learning_rate: 3.0e-4
+    entropy_coef: 5.0e-3
+
+env:
+  sim_dt: 0.01
+  ctrl_dt: 0.02
+  scene:
+    model_file: src/unilab/assets/robots/opendoge/opendoge.xml
+    fragment_files:
+      - src/unilab/assets/robots/opendoge/locomotion_task.xml
+    terrain:
+      hfield_name: terrain_hfield
+      geom_name: floor
+      generator:
+        seed: 42
+        curriculum: false
+        size: [8.0, 8.0]
+        num_rows: 6
+        num_cols: 6
+        border_width: 20.0
+  terrain_curriculum:
+    enabled: true
+    promote_frac: 0.5
+    demote_frac: 0.25
+  terrain_scan:
+    enabled: true
+    geom_name: floor
+  termination_config:
+    terrain_out_of_bounds: true
+    terrain_distance_buffer: 3.0
+  commands:
+    rel_standing_envs: 0.1
+    pure_axis_prob: 0.25
+    resampling_time: 10.0
+    heading_command: true
+    heading_range: [-3.141592653589793, 3.141592653589793]
+    vel_limit:
+      - [-0.8, -0.6, -1.5]
+      - [0.8, 0.6, 1.5]
+  noise_config:
+    level: 1.0
+    scale_joint_angle: 0.08
+    scale_joint_vel: 0.8
+    scale_gyro: 0.35
+  domain_rand:
+    randomize_base_mass: true
+    added_mass_range: [-0.6, 0.6]
+    randomize_body_mass: true
+    body_mass_multiplier_range: [0.92, 1.08]
+    random_com: true
+    com_offset_x: [-0.03, 0.03]
+    com_offset_y: [-0.02, 0.02]
+    com_offset_z: [-0.01, 0.01]
+    randomize_ground_friction: true
+    ground_friction_multiplier_range: [0.7, 1.3]
+    randomize_gravity: true
+    gravity_range: [[-0.5, -0.5, -9.81], [0.5, 0.5, -9.81]]
+    push_robots: true
+    push_interval: 300
+    max_force: [0.8, 0.8, 0.5]
+
+reward:
+  scales:
+    # ── Core tracking (R2 tuned) ──
+    tracking_vx: 1.5
+    tracking_vy: 1.8
+    tracking_ang_vel: 1.8
+    cross_axis_suppression: -0.6
+    tracking_vel_linear: -0.4
+    # ── Regularization (R2 tuned) ──
+    lin_vel_z: -5.0
+    ang_vel_xy: -1.0
+    base_height: -200.0
+    action_rate: -0.004
+    action_smooth: -0.002
+    similar_to_default: -0.03
+    dof_acc: -0.0000005
+    stand_still: -0.5
+    zero_command_stillness: 3.0
+    torques: -0.005
+    energy: -0.0001
+    # ── Gait quality (R37 proven) ──
+    contact: 0.24
+    swing_feet_z: 12.0
+    feet_air_time: 0.5
+    joint_mirror: -0.05
+    hip_pos: -0.25
+    # ── Terrain-specific (R2 tuned) ──
+    undesired_contacts: -1.0
+    feet_slide: -0.1
+    feet_height_body: -5.0
+    feet_gait: 0.5
+    feet_air_time_variance: -1.0
+    feet_contact_without_cmd: 0.1
+    upward: 1.5
+  tracking_sigma: 0.22
+  base_height_target: 0.15
+  # ── Terrain reward thresholds ──
+  stand_still_command_threshold: 0.1
+  contact_threshold: 1.0
+  feet_air_time_threshold: 0.5
+  feet_height_body_target: -0.1
+  feet_height_body_tanh_mult: 2.0
+  feet_gait_std: 0.7071067811865476
+  feet_gait_max_err: 0.2
+  feet_gait_velocity_threshold: 0.5
+  feet_gait_command_threshold: 0.1
+  max_air_time: 0.25

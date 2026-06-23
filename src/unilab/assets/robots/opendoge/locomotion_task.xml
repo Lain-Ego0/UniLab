@@ -1,0 +1,42 @@
+<mujoco model="opendoge locomotion task">
+  <sensor>
+    <!-- foot contacts — force data for foot-related rewards -->
+    <contact name="FL_foot_contact" geom1="floor" geom2="FL" data="force" num="1" reduce="mindist"/>
+    <contact name="FR_foot_contact" geom1="floor" geom2="FR" data="force" num="1" reduce="mindist"/>
+    <contact name="RL_foot_contact" geom1="floor" geom2="RL" data="force" num="1" reduce="mindist"/>
+    <contact name="RR_foot_contact" geom1="floor" geom2="RR" data="force" num="1" reduce="mindist"/>
+
+    <!-- undesired contacts — binary found/not-found -->
+    <contact name="base1_contact" geom1="floor" geom2="base1" data="found" num="1" reduce="mindist"/>
+
+    <contact name="FL_hip_contact" geom1="floor" geom2="FL_hip_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="FR_hip_contact" geom1="floor" geom2="FR_hip_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="RL_hip_contact" geom1="floor" geom2="RL_hip_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="RR_hip_contact" geom1="floor" geom2="RR_hip_geom" data="found" num="1" reduce="mindist"/>
+
+    <contact name="FL_thigh_contact" geom1="floor" geom2="FL_thigh_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="FR_thigh_contact" geom1="floor" geom2="FR_thigh_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="RL_thigh_contact" geom1="floor" geom2="RL_thigh_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="RR_thigh_contact" geom1="floor" geom2="RR_thigh_geom" data="found" num="1" reduce="mindist"/>
+
+    <contact name="FL_calf_contact" geom1="floor" geom2="FL_calf_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="FR_calf_contact" geom1="floor" geom2="FR_calf_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="RL_calf_contact" geom1="floor" geom2="RL_calf_geom" data="found" num="1" reduce="mindist"/>
+    <contact name="RR_calf_contact" geom1="floor" geom2="RR_calf_geom" data="found" num="1" reduce="mindist"/>
+  </sensor>
+
+  <keyframe>
+    <key name="home" qpos="
+        0 0 0.17  1 0 0 0
+        0 0.5 -1.3
+        0 0.5 -1.3
+        0 0.7 -1.3
+        0 0.7 -1.3"
+      ctrl="
+        0 0.5 -1.3
+        0 0.5 -1.3
+        0 0.7 -1.3
+        0 0.7 -1.3"/>
+  </keyframe>
+
+</mujoco>

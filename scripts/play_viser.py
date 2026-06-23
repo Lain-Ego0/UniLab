@@ -169,6 +169,10 @@ def _build_scene_entries(
     Returns:
         Scene-entry dictionaries consumed by the playback loop.
     """
+    # Resolve terrain config for visual mesh (same generator used at training time).
+    terrain_cfg = getattr(getattr(env.cfg, "scene", None), "terrain", None)
+    terrain_gen_cfg = terrain_cfg.generator if terrain_cfg is not None else None
+
     entries: list[dict[str, Any]] = []
     visible_envs = int(len(visible_env_indices))
     if mode == "single":
@@ -180,7 +184,11 @@ def _build_scene_entries(
                 "runtime_env_idx": env_idx,
                 "model": mj_model,
                 "data": mujoco.MjData(mj_model),
-                "scene": MujocoViserScene(server, mj_model, name_prefix="/mujoco/single"),
+                "scene": MujocoViserScene(
+                    server, mj_model,
+                    name_prefix="/mujoco/single",
+                    terrain_cfg=terrain_gen_cfg,
+                ),
             }
         )
         return entries
@@ -201,6 +209,7 @@ def _build_scene_entries(
                     name_prefix=f"/mujoco/env_{local_idx}",
                     position_offset=_scene_offset(offsets[local_idx]),
                     render_plane=(local_idx == 0),
+                    terrain_cfg=terrain_gen_cfg,
                 ),
             }
         )

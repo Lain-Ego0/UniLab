@@ -219,14 +219,14 @@ class OpenDogeJoystickRoughDomainRandomizationProvider(
         num_reset = len(env_ids)
         qpos = np.tile(env._init_qpos, (num_reset, 1))
         qvel = np.tile(env._init_qvel, (num_reset, 1))
-        # spawn on terrain cell with random xy offset
+        # spawn on terrain cell — apply_spawn samples the actual terrain
+        # surface at the spawn position (fixes "dropping from air" bug).
         qpos[:, 0:2] += np.random.uniform(-0.5, 0.5, (num_reset, 2))
-        qpos[:, 2] += np.random.uniform(0.1, 0.3, (num_reset,))
-        qpos[:, 0:3] += env._spawn.origins_for(env_ids)
-        # random orientation
+        # random orientation (yaw needed for apply_spawn height sampling)
         roll = np.random.uniform(-np.pi, np.pi, (num_reset,))
         pitch = np.random.uniform(-np.pi, np.pi, (num_reset,))
         yaw = np.random.uniform(-np.pi, np.pi, (num_reset,))
+        qpos[:, 0:3] = env._spawn.apply_spawn(env_ids, qpos[:, 0:3], yaw=yaw)
         qpos[:, 3:7] = np_quat_mul(
             qpos[:, 3:7], np_quat_from_euler_xyz(roll, pitch, yaw)
         )

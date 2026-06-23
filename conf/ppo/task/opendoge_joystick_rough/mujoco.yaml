@@ -49,8 +49,8 @@ env:
         border_width: 20.0
   terrain_curriculum:
     enabled: true
-    promote_frac: 0.5
-    demote_frac: 0.25
+    promote_frac: 0.2
+    demote_frac: 0.1
   terrain_scan:
     enabled: true
     geom_name: floor
@@ -85,7 +85,7 @@ env:
     randomize_gravity: true
     gravity_range: [[-0.5, -0.5, -9.81], [0.5, 0.5, -9.81]]
     push_robots: true
-    push_interval: 300
+    push_interval: 500
     max_force: [0.8, 0.8, 0.5]
 
 reward:
@@ -99,7 +99,7 @@ reward:
     # ── Regularization (R2 tuned) ──
     lin_vel_z: -5.0
     ang_vel_xy: -1.0
-    base_height: -200.0
+    base_height: -100.0
     action_rate: -0.004
     action_smooth: -0.002
     similar_to_default: -0.03

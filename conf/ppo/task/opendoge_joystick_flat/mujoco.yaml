@@ -49,9 +49,9 @@ reward:
     tracking_ang_vel: 1.5
     cross_axis_suppression: -0.6
     lin_vel_z: -4.0
-    ang_vel_xy: -0.5
+    ang_vel_xy: -0.7
     base_height: -200.0
-    action_rate: -0.005
+    action_rate: -0.004
     action_smooth: -0.002
     similar_to_default: -0.03
     dof_acc: -0.0000005
@@ -60,7 +60,7 @@ reward:
     torques: -0.005
     energy: -0.0001
     contact: 0.24
-    swing_feet_z: 10.0
+    swing_feet_z: 12.0
     feet_air_time: 0.5
     joint_mirror: -0.05
     hip_pos: -0.25

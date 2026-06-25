@@ -1,5 +1,9 @@
 # OpenDoge 四足机器人 UniLab 地形训练手册
 
+uv run scripts/play_viser.py task=opendoge_joystick_rough/mujoco \
+  interactive.action_mode=policy viser.port=8080
+
+
 轻量四足（总重 ~4.80 kg，base 2.24 kg，12 DOF，4 腿 FL/FR/RL/RR，每腿 hip+thigh+calf）。
 
 > 物理约束与机器人几何参数详见 [OpenDoge_flat.md](OpenDoge_flat.md)。
